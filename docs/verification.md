@@ -1,4 +1,6 @@
-# Clipboard verification — W2
+# Clipboard verification — W2 / W3
+
+> The W2 record below is historical. W3 replaces Linux's arboard writer and alias-size workaround with a native x11rb owner, adds Windows native access, and adds portable CF_HTML. See the W3 section for the current implementation and evidence.
 
 Verified **2026-11-01**. Authoritative requirements: `docs/design.md` §§4.4, 5.3, 6.
 
@@ -71,3 +73,87 @@ The coordinated full CLI runtime probe also passed under Xvfb after the alias fi
 - Linux native Wayland is unsupported in this implementation; XWayland needs a usable DISPLAY and compositor bridging behavior remains untested.
 - Test INCR with an external incremental owner, clipboard-manager handoff/history, hostile/unresponsive owners, and rapid competing owners. The holder exits after ownership changes; it does not implement a clipboard-manager SAVE_TARGETS handoff.
 - Byte sizes for advertised but refused arboard plain aliases use the UTF8_STRING fallback as documented above.
+
+---
+
+# W3 — native Windows and three-format X11
+
+Verified **2026-11-01** on this Linux x86_64 box. Requirements: `docs/design.md` §§4.3, 5.3, 7, 11. No `xclip`/`wl-copy` installation or desktop clipboard was needed; runtime work used isolated Xvfb.
+
+## Current implementation
+
+- `cf_html.rs` is always compiled and tested, including on Linux. CF_HTML uses `Version:0.9`, CRLF header lines, ten-digit zero-padded byte offsets, a complete HTML context, and fragment markers. Optional ASCII `SourceURL` contributes to all offsets; CR/LF/NUL injection is rejected. Existing markers are respected. Tests cover ASCII, Chinese, emoji, empty content, source URLs, existing markers and body attributes. They slice encoded UTF-8 bytes at the offsets, check exact content and surrounding markers, and assert EndHTML equals the encoded byte length.
+- Windows uses native `windows-sys` APIs, one `EmptyClipboard`, registered `HTML Format` / `text/markdown`, UTF-16 NUL-terminated CF_UNICODETEXT with CRLF, and CF_HTML UTF-8. OpenClipboard retries ten attempts, 20 ms between failures. The implementation owns a hidden window, uses moveable global memory with explicit transfer of ownership, and closes the clipboard via RAII. Inspection enumerates actual formats and reports native allocation sizes (including terminators/padding, not UTF-8 character counts).
+- X11 now uses **x11rb directly**, not arboard in production. The event-thread owner offers HTML, plain aliases and Markdown in one ownership acquisition; it confirms ownership before signalling readiness. CLI re-exec remains the background-holding mechanism. SelectionClear ends the holder after replacement. Dropping a library clipboard stops its thread without releasing a newer owner's selection.
+- Every advertised X11 data target is actually served. The W2 advertised-but-unserved arboard alias defect and inspection's guessed UTF8_STRING size fallback are gone. Arboard remains a dev dependency for independent interoperability checks only.
+- Data over 64 KiB uses INCR with delete-acknowledged chunks and a zero-length final property. Idle outgoing transfers expire after 30 seconds; readers use progress-reset idle deadlines. Unsupported targets are refused without terminating the owner. TEXT carries UTF-8. MULTIPLE, TIMESTAMP, and SAVE_TARGETS are not advertised or implemented.
+
+| Mode | Windows | X11 |
+| --- | --- | --- |
+| Multi | CF_UNICODETEXT + HTML Format + text/markdown | TARGETS + text/html + text/markdown + five plain aliases |
+| Html | CF_UNICODETEXT + HTML Format | TARGETS + text/html + five plain aliases |
+| Plain | CF_UNICODETEXT | TARGETS + five plain aliases |
+| Markdown | Markdown in CF_UNICODETEXT | TARGETS + Markdown in five plain aliases |
+
+X11 plain aliases: `UTF8_STRING`, `TEXT`, `text/plain`, `text/plain;charset=utf-8`, `text/plain;charset=UTF-8`.
+
+## Tested here — independent reader against the exited CLI
+
+Reproducible commands from the repository root (`$HOME/.cargo/bin` on PATH):
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo build --workspace
+cargo build --workspace --example x11_read
+xvfb-run -a python3 scripts/w3-x11-probe.py
+```
+
+The script invokes the built CLI, waits for its **exit status 0**, then starts a separate `x11_read` process for each selection request. The example uses x11rb directly and does not call the clipboard library. `x11_read TARGETS` prints atom names; `x11_read text/html`, `x11_read UTF8_STRING`, and `x11_read text/markdown` emit unmodified bytes, equivalent to `xclip -o -t <target>`. Expected payloads come from the public `cleancopy --print` interface, not internal function calls.
+
+Observed output (selected lines; the script checks every advertised alias):
+
+```text
+CLI exited 0 (Multi); subsequent requests use a separate process
+TARGETS: TARGETS, TEXT, UTF8_STRING, text/html, text/markdown, text/plain, text/plain;charset=UTF-8, text/plain;charset=utf-8
+PASS text/html: 137 bytes sha256=fd58ee5cbac800b421f626ee79e0ed583f457822bd489c186c912a6e5f4d1d40
+PASS UTF8_STRING: 52 bytes sha256=401b0574a5bedc8ae0a1f740e8bedfccb7c2759ecb5e9c58175a45d8b1f85692
+PASS text/markdown: 58 bytes sha256=39a6f0fb57c22c2a74dc481303cbb08f4cd8923e1e065350fc60296666168341
+PASS unsupported target refused: Error: "owner refused target"
+PASS empty input exit 1: cleancopy: input is empty or whitespace only
+PASS text/html: 1050028 bytes sha256=9b57db6adfb1ebcfecbd76c02933ead49c57c3de7ba1cc250df5766eacdf06d4
+PASS UTF8_STRING: 474999 bytes sha256=43632577fec68ddb48bb9bb1f9de89602afb84f4baee57631b1a2e2022786249
+PASS text/markdown: 574998 bytes sha256=b33859a445f1cd47ce2f97ace9cfe436cf13183927703a959316ced4e51ad025
+PASS W3 runtime probe: persistence, all advertised targets, mode replacement, refusal, empty input, large transfers
+```
+
+All comparisons were exact byte equality, including Chinese and emoji. `inspect` reported TARGETS as 32 bytes, HTML as 137, plain aliases as 52, and Markdown as 58 for the small payload; large sizes matched the three figures above. Every `--plain`, `--html`, and `--markdown` invocation replaced the previous format set rather than retaining stale Markdown/HTML. After an unsupported target and after rejected empty input, the existing clipboard remained readable and unchanged. Replacing the large Multi clipboard with small Plain data removed HTML and returned the original 52 plain bytes.
+
+## Automated checks executed here
+
+All commands below passed. These are build/static/unit/integration checks, separately from the CLI runtime evidence above:
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo build
+cargo test
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo check --workspace --target x86_64-pc-windows-msvc
+cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+cargo check --workspace --target x86_64-apple-darwin
+cargo clippy --workspace --all-targets --target x86_64-apple-darwin -- -D warnings
+cargo check --workspace --target aarch64-apple-darwin
+cargo clippy --workspace --all-targets --target aarch64-apple-darwin -- -D warnings
+xvfb-run -a cargo test -p cleancopy-clipboard --test native -- --ignored
+xvfb-run -a cargo test -p cleancopy-cli --test clipboard -- --ignored
+```
+
+`cargo test`: **38 passed**, two graphical integration tests ignored by default. The two isolated Xvfb commands then each passed their one ignored test. The native integration test also exercises an independent arboard reader, large payloads, all advertised alias sizes, releasing ownership on Drop, and dropping a superseded handle without affecting a newer owner. Windows-only UTF-16/CRLF unit test code was compiled by target Clippy but cannot execute here.
+
+## Not testable here / not claimed
+
+- **Windows runtime:** allocation ownership, retry contention, Windows clipboard readback, and real application paste need a Windows host. Cross-target compilation and portable CF_HTML tests are not substitutes for this runtime evidence.
+- **macOS runtime:** NSPasteboard and the design §11 Word/Feishu/Notes/editor matrix need a macOS host. No macOS runtime success is claimed.
+- **Wayland:** no native compositor/data-control runtime verification; this backend requires a usable X11/XWayland DISPLAY. XWayland-to-native-Wayland bridging was not exercised.
+- **wl-copy multi-MIME:** binary absent and behavior not tested; no claim that it can or cannot publish several MIME types. W3's solution is native X11 ownership, not multiple wl-copy calls.
+- **Desktop/application compatibility:** no Word, WPS, WeChat, Feishu, Obsidian or Typora paste result, clipboard-manager SAVE_TARGETS handoff, or custom Markdown consumer behavior is established by Xvfb. The design §11 application matrix remains open.

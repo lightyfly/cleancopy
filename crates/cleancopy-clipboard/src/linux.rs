@@ -1,9 +1,14 @@
 use crate::{error, ClipboardFormat, Payload, Result, WriteMode};
 use std::{
     cell::RefCell,
+    collections::HashMap,
     io::{Read, Write},
     path::Path,
     process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -11,41 +16,287 @@ use x11rb::{
     connection::Connection,
     protocol::{
         xproto::{
-            Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, Property, Window,
-            WindowClass,
+            Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt, CreateWindowAux, EventMask,
+            Property, SelectionNotifyEvent, SelectionRequestEvent, Window, WindowClass,
+            SELECTION_NOTIFY_EVENT,
         },
         Event,
     },
     rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
     COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
 };
 
+// A connection and its event loop belong to exactly one thread. Dropping the
+// handle stops that loop and closes the connection (releasing the selection).
 pub struct NativeClipboard {
-    clipboard: RefCell<arboard::Clipboard>,
+    owner: RefCell<Option<OwnerThread>>,
+}
+struct OwnerThread {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+impl Drop for OwnerThread {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 impl NativeClipboard {
     pub fn new() -> Result<Self> {
+        // Fail at construction when no X11/XWayland display is available.
+        Inspector::new()?;
         Ok(Self {
-            clipboard: RefCell::new(arboard::Clipboard::new().map_err(error)?),
+            owner: RefCell::new(None),
         })
     }
     pub fn write_mode(&self, payload: &Payload, mode: WriteMode) -> Result<()> {
-        let mut clipboard = self.clipboard.borrow_mut();
-        match mode {
-            WriteMode::Multi | WriteMode::Html => {
-                clipboard.set_html(payload.html.clone(), Some(payload.plain.clone()))
-            }
-            WriteMode::Plain => clipboard.set_text(payload.plain.clone()),
-            WriteMode::Markdown => clipboard.set_text(payload.markdown.clone()),
-        }
-        .map_err(error)
+        let owner = Owner::new(payload, mode)?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let thread = thread::Builder::new()
+            .name("cleancopy-x11".into())
+            .spawn(move || owner.run(&flag))
+            .map_err(error)?;
+        *self.owner.borrow_mut() = Some(OwnerThread {
+            stop,
+            thread: Some(thread),
+        });
+        Ok(())
     }
     pub(crate) fn read_native_text(&self) -> Result<String> {
-        self.clipboard.borrow_mut().get_text().map_err(error)
+        let reader = Inspector::new()?;
+        if reader.owner()? == 0 {
+            return Err(error("X11 clipboard has no owner"));
+        }
+        for name in [
+            "UTF8_STRING",
+            "text/plain;charset=utf-8",
+            "text/plain",
+            "TEXT",
+            "STRING",
+        ] {
+            let target = reader.atom(name.as_bytes())?;
+            if let Ok(bytes) = reader.convert(target) {
+                // ICCCM STRING is ISO-8859-1, not UTF-8.
+                return if name == "STRING" {
+                    Ok(bytes.into_iter().map(char::from).collect())
+                } else {
+                    String::from_utf8(bytes).map_err(error)
+                };
+            }
+        }
+        Err(error("X11 clipboard has no readable text target"))
     }
-    /// Query the real X11 TARGETS, then request each target's native bytes.
     pub fn list_formats(&self) -> Result<Vec<ClipboardFormat>> {
         inspect()
+    }
+}
+
+const CHUNK_BYTES: usize = 64 * 1024;
+struct Transfer {
+    target: Atom,
+    data: Arc<[u8]>,
+    offset: usize,
+    touched: Instant,
+}
+struct Owner {
+    x: Inspector,
+    targets: Atom,
+    data: HashMap<Atom, Arc<[u8]>>,
+    transfers: HashMap<(Window, Atom), Transfer>,
+}
+impl Owner {
+    fn new(payload: &Payload, mode: WriteMode) -> Result<Self> {
+        let x = Inspector::new()?;
+        let targets = x.atom(b"TARGETS")?;
+        let mut data = HashMap::new();
+        let text: Arc<[u8]> = Arc::from(if mode == WriteMode::Markdown {
+            payload.markdown.as_bytes()
+        } else {
+            payload.plain.as_bytes()
+        });
+        for name in [
+            "UTF8_STRING",
+            "text/plain;charset=utf-8",
+            "text/plain;charset=UTF-8",
+            "text/plain",
+            "TEXT",
+        ] {
+            data.insert(x.atom(name.as_bytes())?, Arc::clone(&text));
+        }
+        if matches!(mode, WriteMode::Multi | WriteMode::Html) {
+            data.insert(x.atom(b"text/html")?, Arc::from(payload.html.as_bytes()));
+        }
+        if mode == WriteMode::Multi {
+            data.insert(
+                x.atom(b"text/markdown")?,
+                Arc::from(payload.markdown.as_bytes()),
+            );
+        }
+        x.conn
+            .set_selection_owner(x.window, x.selection, CURRENT_TIME)
+            .map_err(error)?
+            .check()
+            .map_err(error)?;
+        // This round trip is the readiness barrier, on the writer connection.
+        if x.owner()? != x.window {
+            return Err(error(
+                "X11 clipboard ownership was replaced before readiness",
+            ));
+        }
+        Ok(Self {
+            x,
+            targets,
+            data,
+            transfers: HashMap::new(),
+        })
+    }
+    fn request(&mut self, request: SelectionRequestEvent) -> Result<()> {
+        let property = if request.property == 0 {
+            request.target
+        } else {
+            request.property
+        };
+        let mut accepted = false;
+        if request.selection == self.x.selection {
+            if request.target == self.targets {
+                let mut targets: Vec<_> = self.data.keys().copied().collect();
+                targets.push(self.targets);
+                targets.sort_unstable();
+                self.x
+                    .conn
+                    .change_property32(
+                        x11rb::protocol::xproto::PropMode::REPLACE,
+                        request.requestor,
+                        property,
+                        AtomEnum::ATOM,
+                        &targets,
+                    )
+                    .map_err(error)?
+                    .check()
+                    .map_err(error)?;
+                accepted = true;
+            } else if let Some(data) = self.data.get(&request.target) {
+                if data.len() <= CHUNK_BYTES {
+                    self.x
+                        .conn
+                        .change_property8(
+                            x11rb::protocol::xproto::PropMode::REPLACE,
+                            request.requestor,
+                            property,
+                            request.target,
+                            data,
+                        )
+                        .map_err(error)?
+                        .check()
+                        .map_err(error)?;
+                } else {
+                    // Subscribe before announcing INCR so no delete acknowledgement is lost.
+                    self.x
+                        .conn
+                        .change_window_attributes(
+                            request.requestor,
+                            &ChangeWindowAttributesAux::new()
+                                .event_mask(EventMask::PROPERTY_CHANGE),
+                        )
+                        .map_err(error)?
+                        .check()
+                        .map_err(error)?;
+                    self.x
+                        .conn
+                        .change_property32(
+                            x11rb::protocol::xproto::PropMode::REPLACE,
+                            request.requestor,
+                            property,
+                            self.x.incr,
+                            &[u32::try_from(data.len()).map_err(error)?],
+                        )
+                        .map_err(error)?
+                        .check()
+                        .map_err(error)?;
+                    self.transfers.insert(
+                        (request.requestor, property),
+                        Transfer {
+                            target: request.target,
+                            data: Arc::clone(data),
+                            offset: 0,
+                            touched: Instant::now(),
+                        },
+                    );
+                }
+                accepted = true;
+            }
+        }
+        self.x
+            .conn
+            .send_event(
+                false,
+                request.requestor,
+                EventMask::NO_EVENT,
+                SelectionNotifyEvent {
+                    response_type: SELECTION_NOTIFY_EVENT,
+                    sequence: 0,
+                    time: request.time,
+                    requestor: request.requestor,
+                    selection: request.selection,
+                    target: request.target,
+                    property: if accepted { property } else { 0 },
+                },
+            )
+            .map_err(error)?;
+        self.x.conn.flush().map_err(error)
+    }
+    fn chunk(&mut self, window: Window, property: Atom) -> Result<()> {
+        let key = (window, property);
+        if let Some(transfer) = self.transfers.get_mut(&key) {
+            let end = (transfer.offset + CHUNK_BYTES).min(transfer.data.len());
+            self.x
+                .conn
+                .change_property8(
+                    x11rb::protocol::xproto::PropMode::REPLACE,
+                    window,
+                    property,
+                    transfer.target,
+                    &transfer.data[transfer.offset..end],
+                )
+                .map_err(error)?
+                .check()
+                .map_err(error)?;
+            let done = transfer.offset == transfer.data.len();
+            transfer.offset = end;
+            transfer.touched = Instant::now();
+            if done {
+                self.transfers.remove(&key);
+            }
+            self.x.conn.flush().map_err(error)?;
+        }
+        Ok(())
+    }
+    fn run(mut self, stop: &AtomicBool) {
+        while !stop.load(Ordering::Acquire) {
+            match self.x.conn.poll_for_event() {
+                Ok(Some(Event::SelectionClear(event))) if event.selection == self.x.selection => {
+                    break;
+                }
+                Ok(Some(Event::SelectionRequest(event))) => {
+                    // A disappearing requestor must not take down the clipboard owner.
+                    let _ = self.request(event);
+                }
+                Ok(Some(Event::PropertyNotify(event))) if event.state == Property::DELETE => {
+                    if self.chunk(event.window, event.atom).is_err() {
+                        self.transfers.remove(&(event.window, event.atom));
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => thread::sleep(Duration::from_millis(2)),
+                Err(_) => break,
+            }
+            self.transfers
+                .retain(|_, t| t.touched.elapsed() < Duration::from_secs(30));
+        }
     }
 }
 
@@ -95,6 +346,15 @@ impl Inspector {
             incr,
         })
     }
+    fn atom(&self, name: &[u8]) -> Result<Atom> {
+        Ok(self
+            .conn
+            .intern_atom(false, name)
+            .map_err(error)?
+            .reply()
+            .map_err(error)?
+            .atom)
+    }
     fn owner(&self) -> Result<Window> {
         Ok(self
             .conn
@@ -129,7 +389,7 @@ impl Inspector {
             )
             .map_err(error)?;
         self.conn.flush().map_err(error)?;
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut deadline = Instant::now() + Duration::from_secs(3);
         loop {
             if let Event::SelectionNotify(event) = self.event(deadline)? {
                 if event.requestor == self.window && event.target == target {
@@ -172,6 +432,7 @@ impl Inspector {
                         return Ok(bytes);
                     }
                     bytes.extend(part.value);
+                    deadline = Instant::now() + Duration::from_secs(3);
                 }
             }
         }
@@ -196,6 +457,9 @@ fn inspect() -> Result<Vec<ClipboardFormat>> {
         .map_err(error)?
         .atom;
     let raw = inspector.convert(targets)?;
+    if raw.len() % 4 != 0 {
+        return Err(error("malformed X11 TARGETS property"));
+    }
     let mut formats = Vec::new();
     // x11rb's connection byte order is the host's native byte order.
     for bytes in raw.as_chunks::<4>().0 {
@@ -222,23 +486,6 @@ fn inspect() -> Result<Vec<ClipboardFormat>> {
         } else {
             match inspector.convert(atom) {
                 Ok(data) => data.len(),
-                // arboard 3.6.1 advertises these aliases but its X11 request
-                // handler only matches the stored UTF8_STRING atom.
-                Err(_)
-                    if matches!(
-                        name.as_str(),
-                        "text/plain" | "text/plain;charset=utf-8" | "text/plain;charset=UTF-8"
-                    ) =>
-                {
-                    let utf8 = inspector
-                        .conn
-                        .intern_atom(false, b"UTF8_STRING")
-                        .map_err(error)?
-                        .reply()
-                        .map_err(error)?
-                        .atom;
-                    inspector.convert(utf8)?.len()
-                }
                 Err(cause) => return Err(error(format!("cannot read X11 target {name}: {cause}"))),
             }
         };
@@ -338,30 +585,19 @@ pub fn run_holder() -> Result<()> {
         markdown: read_string()?,
     };
     let clipboard = NativeClipboard::new()?;
-    let inspector = Inspector::new()?;
-    let previous_owner = inspector.owner()?;
     clipboard.write_mode(&payload, mode)?;
-    // The writer and inspector use different X connections; flush alone does
-    // not guarantee that the server processed SetSelectionOwner yet.
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let owner = loop {
-        let owner = inspector.owner()?;
-        if owner != 0 && owner != previous_owner {
-            break owner;
-        }
-        if Instant::now() >= deadline {
-            return Err(error("clipboard holder did not acquire ownership"));
-        }
-        thread::sleep(Duration::from_millis(2));
-    };
     {
         let mut output = std::io::stdout().lock();
         output.write_all(&[1]).map_err(error)?;
         output.flush().map_err(error)?;
     }
-    // Arboard serves data on its own thread. Observe ownership without another set,
-    // which would create a race between the readiness signal and replacement.
-    while inspector.owner()? == owner {
+    // SelectionClear terminates the owner's event thread after replacement.
+    while clipboard.owner.borrow().as_ref().is_some_and(|owner| {
+        owner
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+    }) {
         thread::sleep(Duration::from_millis(100));
     }
     Ok(())

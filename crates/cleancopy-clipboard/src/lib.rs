@@ -1,6 +1,8 @@
 //! Native clipboard access. Linux writers must remain alive to serve X11 requests.
 use std::{error::Error, fmt};
 
+pub mod cf_html;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Payload {
     pub html: String,
@@ -51,11 +53,15 @@ pub use linux::{run_holder, spawn_holder, NativeClipboard};
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::NativeClipboard;
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::NativeClipboard;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[derive(Debug, Default)]
 pub struct NativeClipboard;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 impl NativeClipboard {
     pub fn new() -> Result<Self> {
         Err(error(
@@ -82,7 +88,7 @@ impl ClipboardWriter for NativeClipboard {
         self.read_native_text()
     }
 }
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 impl NativeClipboard {
     fn read_native_text(&self) -> Result<String> {
         Err(error(

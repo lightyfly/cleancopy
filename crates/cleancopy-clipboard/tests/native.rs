@@ -18,6 +18,33 @@ fn native_modes_and_byte_sizes() {
         .find(|f| matches!(f.name.as_str(), "text/html" | "public.html"))
         .unwrap();
     assert_eq!(html.bytes, payload.html.len());
+    #[cfg(target_os = "linux")]
+    {
+        for name in [
+            "UTF8_STRING",
+            "text/plain;charset=utf-8",
+            "text/plain;charset=UTF-8",
+            "text/plain",
+            "TEXT",
+        ] {
+            assert_eq!(
+                formats.iter().find(|f| f.name == name).unwrap().bytes,
+                payload.plain.len()
+            );
+        }
+        assert_eq!(
+            formats
+                .iter()
+                .find(|f| f.name == "text/markdown")
+                .unwrap()
+                .bytes,
+            payload.markdown.len()
+        );
+        assert_eq!(
+            formats.iter().find(|f| f.name == "TARGETS").unwrap().bytes,
+            formats.len() * 4
+        );
+    }
     #[cfg(target_os = "macos")]
     assert_eq!(
         formats
@@ -47,8 +74,7 @@ fn native_modes_and_byte_sizes() {
         .unwrap()
         .iter()
         .any(|f| matches!(f.name.as_str(), "text/html" | "public.html")));
-    // Large target reads exercise the X11 property size path (and INCR if the
-    // owner uses it). Arboard itself uses one large change-property request.
+    // Native X11 serves these targets using the INCR delete/chunk handshake.
     let large = Payload {
         html: format!("<p>{}</p>", "中".repeat(350_000)),
         plain: "🙂".repeat(300_000),
@@ -65,4 +91,16 @@ fn native_modes_and_byte_sizes() {
         large.html.len()
     );
     assert_eq!(clipboard.read_text().unwrap(), large.plain);
+    #[cfg(target_os = "linux")]
+    {
+        let replacement = NativeClipboard::new().unwrap();
+        replacement.write_mode(&payload, WriteMode::Plain).unwrap();
+        // Stopping a superseded owner must not clear a newer selection.
+        drop(clipboard);
+        assert_eq!(replacement.read_text().unwrap(), payload.plain);
+        drop(replacement);
+        let reader = NativeClipboard::new().unwrap();
+        assert!(reader.list_formats().unwrap().is_empty());
+        assert!(reader.read_text().is_err());
+    }
 }

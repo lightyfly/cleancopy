@@ -15,3 +15,8 @@ clap = { version = "=4.5.31", features = ["derive"] }
 insta = "1.42"
 cleancopy-core = { path = "crates/cleancopy-core" }
 cleancopy-clipboard = { path = "crates/cleancopy-clipboard" }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

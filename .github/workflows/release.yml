@@ -1,0 +1,23 @@
+# W4 preparation only. This workflow cannot publish or create a release/tag.
+# There is deliberately no push/tag trigger or generated cargo-dist release CI.
+name: Distribution plan (no release)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned cargo-dist
+        run: cargo install cargo-dist --version 0.32.0 --locked
+      - name: Plan only (no build, upload, tag, or release)
+        run: dist plan --output-format=json

@@ -1,4 +1,4 @@
-# Clipboard verification — W2 / W3
+# CleanCopy verification — W2 / W3 / W4
 
 > The W2 record below is historical. W3 replaces Linux's arboard writer and alias-size workaround with a native x11rb owner, adds Windows native access, and adds portable CF_HTML. See the W3 section for the current implementation and evidence.
 
@@ -157,3 +157,102 @@ xvfb-run -a cargo test -p cleancopy-cli --test clipboard -- --ignored
 - **Wayland:** no native compositor/data-control runtime verification; this backend requires a usable X11/XWayland DISPLAY. XWayland-to-native-Wayland bridging was not exercised.
 - **wl-copy multi-MIME:** binary absent and behavior not tested; no claim that it can or cannot publish several MIME types. W3's solution is native X11 ownership, not multiple wl-copy calls.
 - **Desktop/application compatibility:** no Word, WPS, WeChat, Feishu, Obsidian or Typora paste result, clipboard-manager SAVE_TARGETS handoff, or custom Markdown consumer behavior is established by Xvfb. The design §11 application matrix remains open.
+
+---
+
+# W4 — integrations, documentation and distribution preparation
+
+Verified **2026-11-01**. No commit, push, publication, tag, or release performed.
+See [compatibility matrix and representation checks](compat.md),
+[regression results and Xvfb failure investigation](w4-checks.md), and
+[local distribution initialization/planning](distribution.md).
+
+## Installed Claude Code, not cached API guidance
+
+Executed `/home/box/.local/bin/claude --version` and `--help`:
+**2.1.197 (Claude Code)**. Help describes `-p` noninteractive mode,
+`--setting-sources`, `--settings`, `--strict-mcp-config`, `--tools`,
+`--permission-mode`, and `--no-session-persistence`. CLI tool options alone
+are not proof of Markdown frontmatter support.
+
+The executable resolves to
+`/home/box/.local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`;
+installed package metadata also reports 2.1.197. The following evidence is
+**readable embedded implementation/schema/documentation inspection**, not
+execution of the parser. Offsets are decimal zero-based file-byte offsets for
+this installed build, not stable API identifiers.
+
+| Requirement | Local evidence | Conclusion / boundary |
+| --- | --- | --- |
+| Command `description` | Embedded docs at 240550667; parser at 236693297 reads `a.description` | Supported string description; docs recommend brief text. Parser excerpt is the plugin command loader, not a direct project-command execution test. |
+| Command `allowed-tools` | Docs at 240550774 say String or Array; parser at 236693586 reads `allowed-tools`; normalizer at 239426978 accepts strings/arrays | Supported hyphenated key. Comma/space splitting preserves parenthesized tool patterns. No permission-enforcement runtime result claimed. |
+| Command `argument-hint` | Docs at 240550990; parser beginning 236693297 stringifies non-null `a["argument-hint"]` | Supported hyphenated metadata key; hint is not argument validation or safe shell interpolation. |
+| Skill `name` / `description` | Parser at 236154003 reads both; local loader at 236158268 locates `<directory>/SKILL.md`, at 236159505 supplies directory identity | Template uses matching `cleancopy` directory/name. In this loader frontmatter name is a display name while directory supplies internal identity. |
+| Stop `transcript_path` | Common schema at 242693402 and common constructor at 239176570 | Required common string; path alone does not prove transcript exists or is flushed. |
+| Stop `last_assistant_message` | Stop schema at 242698827 describes optional string avoiding transcript parsing; generator at 239166885 / 239167058 includes `last_assistant_message:p` | Input is **not limited to transcript_path** in this version. Final text is optional, not guaranteed. |
+
+Stop construction selects the last assistant message (`findLast` helper at
+239446032), filters text blocks and joins them with newline (helper at
+239475501), then trims the result; absent/empty text yields undefined. It does
+not read the transcript to populate this field. This was **source inspection**,
+not capture of a real Stop event. `agent_transcript_path` is a distinct
+SubagentStop field and should not be confused with common `transcript_path`.
+
+## Isolated runtime attempt and exact limits
+
+Created a temporary project outside the repository, copying only `copy.md` to
+`.claude/commands/copy.md` and `SKILL.md` to
+`.claude/skills/cleancopy/SKILL.md`. Used fresh temporary HOME,
+CLAUDE_CONFIG_DIR and XDG_CONFIG_HOME; removed inherited Claude/Anthropic and
+cloud-provider environment variables for the child. No real credentials,
+global configuration, or user settings were copied or changed.
+
+Invoked the installed executable from that project with:
+
+```text
+--setting-sources project --strict-mcp-config --mcp-config {"mcpServers":{}}
+--permission-mode dontAsk --no-session-persistence --tools "" -p /copy
+```
+
+A 25-second bound was applied. It exited **1** with:
+
+```text
+Not logged in · Please run /login
+```
+
+Therefore command/skill **loading and execution were not established** by this
+attempt. There was no model call success, Bash execution, clipboard copy,
+automatic skill activation, or Stop-hook runtime capture. The two templates
+were staged together, but the authentication failure is not evidence either
+was discovered. No login was attempted, and global configuration was untouched.
+Codex snippet loading/execution was not tested. The snippet is manually merged
+instructional guidance, not a claim about a verified Codex extension API.
+
+Separately, a local shell smoke check sent literal `$HOME`, backticks, `$(id)`,
+backslashes, Chinese and Markdown through a single-quoted heredoc and compared
+exact bytes: **passed**, without executing the apparent commands. This checks
+the shell transport mechanism, not model compliance or agent loading.
+
+## Shipped templates and optional hook guidance
+
+- `integrations/claude-code/commands/copy.md`: description, allowed-tools and
+  argument-hint frontmatter; explicit quoted-heredoc pipeline to `cleancopy`.
+- `integrations/claude-code/skills/cleancopy/SKILL.md`: matching name and
+  description; explicit user intent, mode selection and literal-content safety.
+- `integrations/codex/AGENTS.snippet.md`: merge-only instructions, no installer.
+
+Command `allowed-tools: Bash` is broad tool metadata, **not a security sandbox**.
+The instructions restrict usage to the requested copy; host permission policy
+still applies. A quoted delimiter prevents shell expansion, but it must also
+be absent as a whole line from copied text to avoid premature termination.
+The templates require this collision check, fixed known mode flags, no eval,
+no execution of commands in the answer, and no success claim on nonzero exit.
+
+No Stop hook is supplied, installed or enabled. Auto-copy would overwrite the
+clipboard after every answer. A future opt-in hook must parse event JSON,
+check for a nonempty `last_assistant_message` string, and skip without altering
+the clipboard when it is absent; transcript fallback would need separate
+validated parsing. Never pass raw event JSON to `cleancopy`, execute transcript
+content, or invoke Claude recursively from Stop. Check `stop_hook_active` when
+considering recursion safeguards. Review and merge project settings manually;
+source/schema evidence here does not constitute hook runtime verification.

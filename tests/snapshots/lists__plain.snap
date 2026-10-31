@@ -1,6 +1,6 @@
 ---
 source: crates/cleancopy-core/tests/golden.rs
-expression: plain
+expression: "format!(\"{plain}<EOF>\")"
 ---
 列表 Lists
 
@@ -72,3 +72,4 @@ expression: plain
 
 1. 再次从一开始
 2. 再次第二项
+<EOF>

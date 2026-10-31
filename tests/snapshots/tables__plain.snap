@@ -1,6 +1,6 @@
 ---
 source: crates/cleancopy-core/tests/golden.rs
-expression: plain
+expression: "format!(\"{plain}<EOF>\")"
 ---
 表格 Tables
 
@@ -44,3 +44,4 @@ Go        源码        3
 
 1. 产品 Product：CleanCopy；详细说明 Description：这是一段超过六十显示列的中文说明，用于验证超宽表格自动降级为记录式输出。；状态 Status：ready
 2. 产品 Product：Tool；详细说明 Description：第二条记录；状态 Status：pending
+<EOF>

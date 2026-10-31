@@ -26,7 +26,8 @@ fn fixture_snapshots() {
             // Both renderers use native line endings. Compare LF on every OS.
             let plain = render_plain(&input).replace("\r\n", "\n");
             let markdown = render_markdown(&input).replace("\r\n", "\n");
-            insta::assert_snapshot!(format!("{name}__plain"), plain);
+            // An EOF marker keeps trailing newlines visible in insta's text snapshots.
+            insta::assert_snapshot!(format!("{name}__plain"), format!("{plain}<EOF>"));
             insta::assert_snapshot!(format!("{name}__markdown"), markdown);
         }
     });

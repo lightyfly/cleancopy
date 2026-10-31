@@ -18,7 +18,7 @@ cargo run -p cleancopy-cli -- --print markdown < fixtures/kitchen-sink.md
 ./target/debug/cleancopy --print plain notes.md
 ```
 
-The optional file argument defaults to stdin; `-` explicitly selects stdin. Output uses native line endings without adding a trailing newline. Exit codes are `0` for success, `1` for empty input, `2` for I/O errors or unimplemented clipboard operations, and `3` for invalid arguments.
+The optional file argument defaults to stdin; `-` explicitly selects stdin. Output uses native line endings; non-empty plain text ends with a trailing newline, while Markdown remains trimmed. Exit codes are `0` for success, `1` for empty input, `2` for I/O errors or unimplemented clipboard operations, and `3` for invalid arguments.
 
 Plain text uses numbered unordered lists, four-space nested indentation with second-level `1.1` numbering and third-level `-` markers, checkboxes for tasks, bracketed H2–H6 headings, fenced-code separators, readable links and images, and numbered endnotes. Tables use Unicode display widths (CJK characters are two columns) and switch to record-style output above 60 columns. Code-block contents retain their whitespace and blank lines.
 

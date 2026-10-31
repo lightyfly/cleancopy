@@ -1,5 +1,11 @@
-use comrak::{nodes::{AstNode, ListType, NodeValue}, Arena};
-use crate::{parse, width::{display_width, pad_right}};
+use crate::{
+    parse,
+    width::{display_width, pad_right},
+};
+use comrak::{
+    nodes::{AstNode, ListType, NodeValue},
+    Arena,
+};
 
 const RULE: &str = "────────";
 
@@ -25,6 +31,9 @@ pub fn render_plain(input: &str) -> String {
             output.push_str(&format!("[{ix}] {text}"));
         }
     }
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
     crate::native_newlines(&output)
 }
 
@@ -40,7 +49,11 @@ fn inline<'a>(node: &'a AstNode<'a>) -> String {
         NodeValue::HtmlInline(html) => strip_tags(html),
         NodeValue::Link(link) => {
             let text = inlines(node);
-            if text == link.url { text } else { format!("{text} ({})", link.url) }
+            if text == link.url {
+                text
+            } else {
+                format!("{text} ({})", link.url)
+            }
         }
         NodeValue::Image(link) => format!("[图片: {}] ({})", inlines(node), link.url),
         NodeValue::FootnoteReference(reference) => format!("[{}]", reference.ix),
@@ -49,8 +62,11 @@ fn inline<'a>(node: &'a AstNode<'a>) -> String {
 }
 
 fn blocks<'a>(node: &'a AstNode<'a>, path: &[usize]) -> String {
-    node.children().map(|child| block(child, path)).filter(|s| !s.is_empty())
-        .collect::<Vec<_>>().join("\n\n")
+    node.children()
+        .map(|child| block(child, path))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn block<'a>(node: &'a AstNode<'a>, path: &[usize]) -> String {
@@ -58,26 +74,47 @@ fn block<'a>(node: &'a AstNode<'a>, path: &[usize]) -> String {
         NodeValue::Paragraph => inlines(node),
         NodeValue::Heading(heading) => {
             let text = inlines(node);
-            if heading.level == 1 { text } else { format!("【{text}】") }
+            if heading.level == 1 {
+                text
+            } else {
+                format!("【{text}】")
+            }
         }
         NodeValue::ThematicBreak => RULE.into(),
         NodeValue::CodeBlock(code) => {
             let language = code.info.split_whitespace().next().unwrap_or("");
-            let label = if language.is_empty() { String::new() } else { format!("[{language}]\n") };
+            let label = if language.is_empty() {
+                String::new()
+            } else {
+                format!("[{language}]\n")
+            };
             let mut text = format!("{RULE}\n{label}{}", code.literal);
-            if !text.ends_with('\n') { text.push('\n'); }
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
             text.push_str(RULE);
             text
         }
-        NodeValue::BlockQuote => blocks(node, path).split('\n')
-            .map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n"),
+        NodeValue::BlockQuote => blocks(node, path)
+            .split('\n')
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
         NodeValue::List(list) => {
-            let start = if list.list_type == ListType::Ordered { list.start } else { 1 };
-            node.children().enumerate().map(|(index, item)| {
-                let mut item_path = path.to_vec();
-                item_path.push(start + index);
-                list_item(item, &item_path)
-            }).collect::<Vec<_>>().join(if list.tight { "\n" } else { "\n\n" })
+            let start = if list.list_type == ListType::Ordered {
+                list.start
+            } else {
+                1
+            };
+            node.children()
+                .enumerate()
+                .map(|(index, item)| {
+                    let mut item_path = path.to_vec();
+                    item_path.push(start + index);
+                    list_item(item, &item_path)
+                })
+                .collect::<Vec<_>>()
+                .join(if list.tight { "\n" } else { "\n\n" })
         }
         NodeValue::Table(_) => table(node),
         NodeValue::FootnoteDefinition(_) => String::new(),
@@ -89,23 +126,41 @@ fn block<'a>(node: &'a AstNode<'a>, path: &[usize]) -> String {
 fn list_item<'a>(item: &'a AstNode<'a>, path: &[usize]) -> String {
     let indent = "    ".repeat(path.len() - 1);
     let marker = match &item.data.borrow().value {
-        NodeValue::TaskItem(checked) => if checked.is_some() { "☑".into() } else { "☐".into() },
+        NodeValue::TaskItem(checked) => {
+            if checked.is_some() {
+                "☑".into()
+            } else {
+                "☐".into()
+            }
+        }
         _ if path.len() >= 3 => "-".into(),
         _ if path.len() == 1 => format!("{}.", path[0]),
-        _ => path.iter().map(usize::to_string).collect::<Vec<_>>().join("."),
+        _ => path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("."),
     };
     let mut result = String::new();
     let mut first = true;
     for child in item.children() {
         let text = block(child, path);
-        if text.is_empty() { continue; }
+        if text.is_empty() {
+            continue;
+        }
         if matches!(child.data.borrow().value, NodeValue::List(_)) {
-            if !result.is_empty() { result.push('\n'); }
+            if !result.is_empty() {
+                result.push('\n');
+            }
             result.push_str(&text);
         } else {
-            if !first { result.push_str("\n\n"); }
+            if !first {
+                result.push_str("\n\n");
+            }
             for (line_index, line) in text.split('\n').enumerate() {
-                if line_index > 0 { result.push('\n'); }
+                if line_index > 0 {
+                    result.push('\n');
+                }
                 if first && line_index == 0 {
                     result.push_str(&format!("{indent}{marker} {line}"));
                 } else {
@@ -115,32 +170,76 @@ fn list_item<'a>(item: &'a AstNode<'a>, path: &[usize]) -> String {
         }
         first = false;
     }
-    if first { format!("{indent}{marker}") } else { result }
+    if first {
+        format!("{indent}{marker}")
+    } else {
+        result
+    }
 }
 
 fn table<'a>(node: &'a AstNode<'a>) -> String {
-    let rows: Vec<Vec<String>> = node.children().map(|row| {
-        row.children().map(|cell| inlines(cell).replace('\n', " ")).collect()
-    }).collect();
-    let Some(headers) = rows.first() else { return String::new(); };
-    let widths: Vec<usize> = (0..headers.len()).map(|col| {
-        rows.iter().map(|row| display_width(&row[col])).max().unwrap_or(0).max(2)
-    }).collect();
+    let rows: Vec<Vec<String>> = node
+        .children()
+        .map(|row| {
+            row.children()
+                .map(|cell| inlines(cell).replace('\n', " "))
+                .collect()
+        })
+        .collect();
+    let Some(headers) = rows.first() else {
+        return String::new();
+    };
+    let widths: Vec<usize> = (0..headers.len())
+        .map(|col| {
+            rows.iter()
+                .map(|row| display_width(&row[col]))
+                .max()
+                .unwrap_or(0)
+                .max(2)
+        })
+        .collect();
     let total = widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
     if total > 60 {
-        return rows.iter().skip(1).enumerate().map(|(index, row)| {
-            let fields = headers.iter().zip(row).map(|(key, value)| format!("{key}：{value}"))
-                .collect::<Vec<_>>().join("；");
-            format!("{}. {fields}", index + 1)
-        }).collect::<Vec<_>>().join("\n");
+        return rows
+            .iter()
+            .skip(1)
+            .enumerate()
+            .map(|(index, row)| {
+                let fields = headers
+                    .iter()
+                    .zip(row)
+                    .map(|(key, value)| format!("{key}：{value}"))
+                    .collect::<Vec<_>>()
+                    .join("；");
+                format!("{}. {fields}", index + 1)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     let mut lines = Vec::new();
     for (index, row) in rows.iter().enumerate() {
-        lines.push(row.iter().zip(&widths).enumerate().map(|(col, (cell, width))| {
-            if col + 1 == widths.len() { cell.clone() } else { pad_right(cell, *width) }
-        }).collect::<Vec<_>>().join("  "));
+        lines.push(
+            row.iter()
+                .zip(&widths)
+                .enumerate()
+                .map(|(col, (cell, width))| {
+                    if col + 1 == widths.len() {
+                        cell.clone()
+                    } else {
+                        pad_right(cell, *width)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("  "),
+        );
         if index == 0 {
-            lines.push(widths.iter().map(|width| "─".repeat(*width)).collect::<Vec<_>>().join("  "));
+            lines.push(
+                widths
+                    .iter()
+                    .map(|width| "─".repeat(*width))
+                    .collect::<Vec<_>>()
+                    .join("  "),
+            );
         }
     }
     lines.join("\n")
@@ -154,12 +253,19 @@ fn strip_tags(html: &str) -> String {
     for character in html.chars() {
         if inside {
             if let Some(delimiter) = quote {
-                if character == delimiter { quote = None; }
+                if character == delimiter {
+                    quote = None;
+                }
             } else if character == '\'' || character == '"' {
                 quote = Some(character);
             } else if character == '>' {
                 inside = false;
-                if tag.trim().trim_end_matches('/').trim().eq_ignore_ascii_case("br") {
+                if tag
+                    .trim()
+                    .trim_end_matches('/')
+                    .trim()
+                    .eq_ignore_ascii_case("br")
+                {
                     result.push('\n');
                 }
             }

@@ -10,5 +10,9 @@ pub use render_plain::render_plain;
 
 pub(crate) fn native_newlines(text: &str) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    if cfg!(windows) { text.replace('\n', "\r\n") } else { text }
+    if cfg!(windows) {
+        text.replace('\n', "\r\n")
+    } else {
+        text
+    }
 }

@@ -50,7 +50,25 @@ fn plain_reads_stdin_by_default_and_explicit_dash() {
     for args in [vec!["--print", "plain"], vec!["--print", "plain", "-"]] {
         let output = invoke(&args, input);
         assert!(output.status.success());
-        assert_eq!(output.stdout, cleancopy_core::render_plain(input).as_bytes());
+        assert_eq!(
+            output.stdout,
+            cleancopy_core::render_plain(input).as_bytes()
+        );
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn plain_stdout_has_one_trailing_native_newline() {
+    let expected = if cfg!(windows) {
+        "Hello\r\n"
+    } else {
+        "Hello\n"
+    };
+    for input in ["**Hello**", "**Hello**\n", "**Hello**\n\n"] {
+        let output = invoke(&["--print", "plain"], input);
+        assert!(output.status.success());
+        assert_eq!(output.stdout, expected.as_bytes());
         assert!(output.stderr.is_empty());
     }
 }
@@ -61,7 +79,10 @@ fn plain_reads_file_instead_of_stdin() {
     let input = fs::read_to_string(&file.0).unwrap();
     let output = invoke(&["--print", "plain", file.0.to_str().unwrap()], "ignored");
     assert!(output.status.success());
-    assert_eq!(output.stdout, cleancopy_core::render_plain(&input).as_bytes());
+    assert_eq!(
+        output.stdout,
+        cleancopy_core::render_plain(&input).as_bytes()
+    );
     assert!(output.stderr.is_empty());
 }
 
@@ -70,7 +91,10 @@ fn markdown_print_uses_markdown_renderer() {
     let input = "# Heading\n\n- **First**\n- Second\n";
     let output = invoke(&["--print", "markdown"], input);
     assert!(output.status.success());
-    assert_eq!(output.stdout, cleancopy_core::render_markdown(input).as_bytes());
+    assert_eq!(
+        output.stdout,
+        cleancopy_core::render_markdown(input).as_bytes()
+    );
     assert!(output.stderr.is_empty());
 }
 
@@ -86,7 +110,10 @@ fn empty_input_exits_one() {
 fn empty_file_exits_one() {
     let file = TempInput::new();
     fs::write(&file.0, " \t\n").unwrap();
-    assert_error(invoke(&["--print", "plain", file.0.to_str().unwrap()], ""), 1);
+    assert_error(
+        invoke(&["--print", "plain", file.0.to_str().unwrap()], ""),
+        1,
+    );
 }
 
 #[test]
@@ -117,14 +144,20 @@ fn clipboard_modes_explicitly_report_not_implemented() {
 fn missing_file_exits_two() {
     let file = TempInput::new();
     fs::remove_file(&file.0).unwrap();
-    assert_error(invoke(&["--print", "plain", file.0.to_str().unwrap()], ""), 2);
+    assert_error(
+        invoke(&["--print", "plain", file.0.to_str().unwrap()], ""),
+        2,
+    );
 }
 
 #[test]
 fn invalid_utf8_file_exits_two() {
     let file = TempInput::new();
     fs::write(&file.0, [0xff, 0xfe]).unwrap();
-    assert_error(invoke(&["--print", "plain", file.0.to_str().unwrap()], ""), 2);
+    assert_error(
+        invoke(&["--print", "plain", file.0.to_str().unwrap()], ""),
+        2,
+    );
 }
 
 #[test]

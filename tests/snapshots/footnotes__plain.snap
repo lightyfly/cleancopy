@@ -1,6 +1,6 @@
 ---
 source: crates/cleancopy-core/tests/golden.rs
-expression: plain
+expression: "format!(\"{plain}<EOF>\")"
 ---
 脚注 Footnotes
 
@@ -25,3 +25,4 @@ footnote code
 [2] 中文脚注，含 加粗、斜体、删除线 和 inline code。
 
 [3] 数字标签并不决定显示编号，参见 来源 (https://example.com/note)。
+<EOF>

@@ -5,7 +5,10 @@ pub fn display_width(text: &str) -> usize {
 }
 
 pub fn pad_right(text: &str, width: usize) -> String {
-    format!("{text}{}", " ".repeat(width.saturating_sub(display_width(text))))
+    format!(
+        "{text}{}",
+        " ".repeat(width.saturating_sub(display_width(text)))
+    )
 }
 
 #[cfg(test)]

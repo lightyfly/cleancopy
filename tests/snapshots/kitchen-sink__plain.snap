@@ -1,6 +1,6 @@
 ---
 source: crates/cleancopy-core/tests/golden.rs
-expression: plain
+expression: "format!(\"{plain}<EOF>\")"
 ---
 CleanCopy 综合样例 Kitchen Sink
 
@@ -66,3 +66,4 @@ fn main() {
 正文结束，再次引用同一脚注[1]。
 
 [1] 脚注内容 footnote，含 重点 与 来源 (https://example.com/source)。
+<EOF>

@@ -33,11 +33,17 @@ mod tests {
 
     #[test]
     fn preserves_tabs_inside_code() {
-        assert_eq!(render_markdown("```\n\tcode  \n```"), crate::native_newlines("```\n\tcode  \n```"));
+        assert_eq!(
+            render_markdown("```\n\tcode  \n```"),
+            crate::native_newlines("```\n\tcode  \n```")
+        );
     }
 
     #[test]
     fn removes_osc_hyperlinks() {
-        assert_eq!(render_markdown("\x1b]8;;https://example.com\x1b\\text\x1b]8;;\x1b\\"), "text");
+        assert_eq!(
+            render_markdown("\x1b]8;;https://example.com\x1b\\text\x1b]8;;\x1b\\"),
+            "text"
+        );
     }
 }

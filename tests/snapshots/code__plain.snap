@@ -1,6 +1,6 @@
 ---
 source: crates/cleancopy-core/tests/golden.rs
-expression: plain
+expression: "format!(\"{plain}<EOF>\")"
 ---
 代码 Code
 
@@ -67,3 +67,4 @@ final line
 ────────
 
 最后一段 end。
+<EOF>

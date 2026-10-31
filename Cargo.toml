@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/cleancopy-core", "crates/cleancopy-clipboard", "crates/cleancopy-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+comrak = { version = "0.35", default-features = false }
+unicode-width = "0.2"
+vte = "0.14"
+clap = { version = "=4.5.31", features = ["derive"] }
+insta = "1.42"
+cleancopy-core = { path = "crates/cleancopy-core" }
+cleancopy-clipboard = { path = "crates/cleancopy-clipboard" }

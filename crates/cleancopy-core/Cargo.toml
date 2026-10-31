@@ -1,0 +1,13 @@
+[package]
+name = "cleancopy-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+comrak.workspace = true
+unicode-width.workspace = true
+vte.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

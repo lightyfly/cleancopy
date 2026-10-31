@@ -1,0 +1,74 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: plain
+---
+列表 Lists
+
+【无序列表与三级嵌套】
+
+1. 第一项 parent
+    1.1 子项 child A
+        - 孙项 grandchild A
+        - 孙项 grandchild B
+    1.2 子项 child B
+2. 第二项 sibling
+
+【有序列表起始编号】
+
+7. 七 seven
+
+8. 八 eight
+    8.3 从三开始 nested three
+
+    8.4 四 four
+        - 第三级 third level
+
+9. 九 nine
+
+【有序与无序混合】
+
+3. 外层 ordered
+    3.1 子项 unordered
+    3.2 另一个子项
+4. 外层下一项
+
+1. 外层 unordered
+    1.5 子项从五开始
+    1.6 子项继续
+
+2. 下一项
+
+【任务列表】
+
+☐ 未完成 todo
+☑ 已完成 done
+    ☐ 嵌套任务 nested
+    ☑ 大写 X 完成
+☐ 包含 粗体 和 code
+
+【松散列表、续行与块内容】
+
+1. 第一段 first paragraph
+    软换行 continuation。
+
+    同一项第二段 second paragraph。
+
+    > 列表内引用 quote。
+
+    ────────
+    [text]
+    code inside list
+      keep indentation
+    ────────
+
+2. 最后一项 last item
+
+【独立列表重置】
+
+1. 新列表 A
+2. 新列表 B
+
+一段分隔文字。
+
+1. 再次从一开始
+2. 再次第二项

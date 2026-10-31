@@ -1,0 +1,28 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: markdown
+---
+# 脚注 Footnotes
+
+先引用第二个定义[^later]，再引用中文标签[^中文]，然后重复[^later]。
+数字标签也可用[^42]。未定义的标签保持原文[^missing]。
+
+[^中文]: 中文脚注，含 **加粗**、*斜体*、~~删除线~~ 和 `inline code`。
+
+[^42]: 数字标签并不决定显示编号，参见 [来源](https://example.com/note)。
+
+[^later]: First referenced note，定义顺序与引用顺序不同。
+
+    第二段保留段落结构。
+
+    - 脚注里的列表 one
+    - 脚注里的列表 two
+
+    ```text
+    footnote code
+      indented
+    ```
+
+[^unused]: 未被引用的脚注不应出现在正文脚注列表。
+
+正文在定义之后继续，最后再次引用中文脚注[^中文]。

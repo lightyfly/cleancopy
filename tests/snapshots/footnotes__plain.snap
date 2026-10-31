@@ -1,0 +1,27 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: plain
+---
+脚注 Footnotes
+
+先引用第二个定义[1]，再引用中文标签[2]，然后重复[1]。
+数字标签也可用[3]。未定义的标签保持原文[^missing]。
+
+正文在定义之后继续，最后再次引用中文脚注[2]。
+
+[1] First referenced note，定义顺序与引用顺序不同。
+
+第二段保留段落结构。
+
+1. 脚注里的列表 one
+2. 脚注里的列表 two
+
+────────
+[text]
+footnote code
+  indented
+────────
+
+[2] 中文脚注，含 加粗、斜体、删除线 和 inline code。
+
+[3] 数字标签并不决定显示编号，参见 来源 (https://example.com/note)。

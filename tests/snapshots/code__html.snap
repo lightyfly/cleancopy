@@ -1,0 +1,48 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: "format!(\"{}<EOF>\", render_html(&input))"
+---
+<html><body>
+<h1>代码 Code</h1>
+<p>行内 <code style="font-family:monospace;background-color:#f5f5f5"> padded code </code>、<code style="font-family:monospace;background-color:#f5f5f5">`backticks`</code>、<code style="font-family:monospace;background-color:#f5f5f5">a &lt; b &amp;&amp; c &gt; d</code> 与 <code style="font-family:monospace;background-color:#f5f5f5">中文 English</code>。</p>
+<h2>Fenced Rust</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">fn main() {
+    let text = &quot;中文  English&quot;;  
+
+	println!(&quot;{text}&quot;);
+    // trailing spaces below are intentional
+    let padded = 1;    
+}
+
+</code></pre>
+<h2>No language / leading and trailing blank lines</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">
+  leading two spaces
+    leading four spaces
+	leading tab
+trailing two spaces  
+
+
+</code></pre>
+<h2>Tilde fence with metadata</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">def greet(name):
+    return f&quot;你好, {name}&quot;  
+</code></pre>
+<h2>Embedded fence and literal Markdown</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">```rust
+    literal fenced block
+```
+# not a heading
+**not emphasis** &lt;span&gt;not HTML&lt;/span&gt;
+</code></pre>
+<h2>Indented code</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">first line
+    second line
+
+final line  
+</code></pre>
+<h2>Empty fenced block</h2>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5"></code></pre>
+<p>最后一段 end。</p>
+</body></html>
+<EOF>

@@ -121,22 +121,47 @@ fn invalid_arguments_exit_three() {
     for args in [
         vec!["--unknown"],
         vec!["--print"],
-        vec!["--print", "html"],
         vec!["--print", "invalid"],
         vec!["--plain", "--html"],
         vec!["--print", "plain", "--markdown"],
         vec!["one.md", "two.md"],
+        vec!["inspect", "--plain"],
+        vec!["inspect", "extra"],
     ] {
         assert_error(invoke(&args, ""), 3);
     }
 }
 
 #[test]
-fn clipboard_modes_explicitly_report_not_implemented() {
-    for args in [vec![], vec!["--plain"], vec!["--html"], vec!["--markdown"]] {
-        let output = invoke(&args, "Hello clipboard\n");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("not implemented"));
-        assert_error(output, 2);
+fn html_print_uses_html_renderer() {
+    let input = "# Heading\n\nHello **world**.\n";
+    let output = invoke(&["--print", "html"], input);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, cleancopy_core::render_html(input).as_bytes());
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn clipboard_failure_exits_two() {
+    for args in [
+        vec![],
+        vec!["--plain"],
+        vec!["--html"],
+        vec!["--markdown"],
+        vec!["inspect"],
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_cleancopy"))
+            .args(args)
+            .env("DISPLAY", "invalid-display")
+            .env_remove("WAYLAND_DISPLAY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let _ = child.stdin.take().unwrap().write_all(b"Hello clipboard\n");
+        assert_error(child.wait_with_output().unwrap(), 2);
     }
 }
 

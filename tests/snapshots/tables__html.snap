@@ -1,0 +1,143 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: "format!(\"{}<EOF>\", render_html(&input))"
+---
+<html><body>
+<h1>表格 Tables</h1>
+<h2>CJK 显示宽度与列对齐</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px" align="left">语言</th>
+<th style="padding:6px 12px" align="center">分发方式</th>
+<th style="padding:6px 12px" align="right">数量</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px" align="left">Rust</td>
+<td style="padding:6px 12px" align="center">单二进制</td>
+<td style="padding:6px 12px" align="right">12</td>
+</tr>
+<tr>
+<td style="padding:6px 12px" align="left">Go</td>
+<td style="padding:6px 12px" align="center">源码</td>
+<td style="padding:6px 12px" align="right">3</td>
+</tr>
+<tr>
+<td style="padding:6px 12px" align="left">中文 CJK</td>
+<td style="padding:6px 12px" align="center">包 package</td>
+<td style="padding:6px 12px" align="right">100</td>
+</tr>
+</tbody>
+</table>
+<h2>行内格式、空单元格与转义竖线</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">名称</th>
+<th style="padding:6px 12px">内容</th>
+<th style="padding:6px 12px">链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px"><strong>重点</strong></td>
+<td style="padding:6px 12px"><code style="font-family:monospace;background-color:#f5f5f5">a|b</code></td>
+<td style="padding:6px 12px"><a href="https://example.com">文档</a></td>
+</tr>
+<tr>
+<td style="padding:6px 12px">空值</td>
+<td style="padding:6px 12px"></td>
+<td style="padding:6px 12px"><del>旧版</del></td>
+</tr>
+</tbody>
+</table>
+<h2>Exactly 60 columns: 28 + 2 + 30</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">左列</th>
+<th style="padding:6px 12px">右列</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px">1234567890123456789012345678</td>
+<td style="padding:6px 12px">123456789012345678901234567890</td>
+</tr>
+</tbody>
+</table>
+<h2>Exactly 61 columns: 29 + 2 + 30</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">左列</th>
+<th style="padding:6px 12px">右列</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px">12345678901234567890123456789</td>
+<td style="padding:6px 12px">123456789012345678901234567890</td>
+</tr>
+<tr>
+<td style="padding:6px 12px">短</td>
+<td style="padding:6px 12px">值</td>
+</tr>
+</tbody>
+</table>
+<h2>CJK exactly 60 columns: 28 + 2 + 30</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">中文列</th>
+<th style="padding:6px 12px">右列</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px">中文中文中文中文中文中文中文</td>
+<td style="padding:6px 12px">中文中文中文中文中文中文中文中</td>
+</tr>
+</tbody>
+</table>
+<h2>CJK exactly 61 columns: 29 + 2 + 30</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">中文列</th>
+<th style="padding:6px 12px">右列</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px">中文中文中文中文中文中文中文A</td>
+<td style="padding:6px 12px">中文中文中文中文中文中文中文中</td>
+</tr>
+</tbody>
+</table>
+<h2>超宽表格 Wide fallback</h2>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px">产品 Product</th>
+<th style="padding:6px 12px">详细说明 Description</th>
+<th style="padding:6px 12px">状态 Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px">CleanCopy</td>
+<td style="padding:6px 12px">这是一段超过六十显示列的中文说明，用于验证超宽表格自动降级为记录式输出。</td>
+<td style="padding:6px 12px">ready</td>
+</tr>
+<tr>
+<td style="padding:6px 12px">Tool</td>
+<td style="padding:6px 12px">第二条记录</td>
+<td style="padding:6px 12px">pending</td>
+</tr>
+</tbody>
+</table>
+</body></html>
+<EOF>

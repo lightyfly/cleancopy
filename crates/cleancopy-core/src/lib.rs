@@ -1,10 +1,12 @@
-//! Platform-independent Markdown parsing and W1 renderers.
+//! Platform-independent Markdown parsing and renderers.
 
 pub mod parse;
+pub mod render_html;
 pub mod render_md;
 pub mod render_plain;
 pub mod width;
 
+pub use render_html::render_html;
 pub use render_md::render_markdown;
 pub use render_plain::render_plain;
 

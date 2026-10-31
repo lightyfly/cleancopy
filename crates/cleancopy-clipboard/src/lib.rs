@@ -1,5 +1,5 @@
-use std::error::Error;
-use std::fmt;
+//! Native clipboard access. Linux writers must remain alive to serve X11 requests.
+use std::{error::Error, fmt};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Payload {
@@ -8,44 +8,96 @@ pub struct Payload {
     pub markdown: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NotImplemented;
-
-impl fmt::Display for NotImplemented {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("clipboard support is not implemented yet")
-    }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum WriteMode {
+    #[default]
+    Multi,
+    Plain,
+    Html,
+    Markdown,
 }
 
-impl Error for NotImplemented {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardFormat {
+    pub name: String,
+    /// Native data size in bytes, not characters.
+    pub bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardError(pub String);
+impl fmt::Display for ClipboardError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl Error for ClipboardError {}
+pub type Result<T> = std::result::Result<T, ClipboardError>;
+
+pub(crate) fn error(e: impl fmt::Display) -> ClipboardError {
+    ClipboardError(e.to_string())
+}
 
 pub trait ClipboardWriter {
-    fn write(&self, payload: &Payload) -> Result<(), NotImplemented>;
-    fn read_text(&self) -> Result<String, NotImplemented>;
+    fn write(&self, payload: &Payload) -> Result<()>;
+    fn read_text(&self) -> Result<String>;
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct StubClipboard;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{run_holder, spawn_holder, NativeClipboard};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::NativeClipboard;
 
-impl ClipboardWriter for StubClipboard {
-    fn write(&self, _payload: &Payload) -> Result<(), NotImplemented> {
-        Err(NotImplemented)
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[derive(Debug, Default)]
+pub struct NativeClipboard;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+impl NativeClipboard {
+    pub fn new() -> Result<Self> {
+        Err(error(
+            "clipboard backend is not implemented on this platform",
+        ))
     }
+    pub fn write_mode(&self, _: &Payload, _: WriteMode) -> Result<()> {
+        Err(error(
+            "clipboard backend is not implemented on this platform",
+        ))
+    }
+    pub fn list_formats(&self) -> Result<Vec<ClipboardFormat>> {
+        Err(error(
+            "clipboard backend is not implemented on this platform",
+        ))
+    }
+}
 
-    fn read_text(&self) -> Result<String, NotImplemented> {
-        Err(NotImplemented)
+impl ClipboardWriter for NativeClipboard {
+    fn write(&self, payload: &Payload) -> Result<()> {
+        self.write_mode(payload, WriteMode::Multi)
+    }
+    fn read_text(&self) -> Result<String> {
+        self.read_native_text()
+    }
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+impl NativeClipboard {
+    fn read_native_text(&self) -> Result<String> {
+        Err(error(
+            "clipboard backend is not implemented on this platform",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn stub_operations_explicitly_fail() {
-        let clipboard = StubClipboard;
-        assert_eq!(clipboard.write(&Payload::default()), Err(NotImplemented));
-        assert_eq!(clipboard.read_text(), Err(NotImplemented));
-        assert!(NotImplemented.to_string().contains("not implemented"));
+    fn payload_and_mode_defaults() {
+        assert_eq!(Payload::default().plain, "");
+        assert_eq!(WriteMode::default(), WriteMode::Multi);
+        assert_eq!(error("native error").to_string(), "native error");
     }
 }

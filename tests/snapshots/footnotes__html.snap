@@ -1,0 +1,33 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: "format!(\"{}<EOF>\", render_html(&input))"
+---
+<html><body>
+<h1>脚注 Footnotes</h1>
+<p>先引用第二个定义<sup><a href="#fn-later" id="fnref-later" data-footnote-ref>1</a></sup>，再引用中文标签<sup><a href="#fn-%E4%B8%AD%E6%96%87" id="fnref-%E4%B8%AD%E6%96%87" data-footnote-ref>2</a></sup>，然后重复<sup><a href="#fn-later" id="fnref-later-2" data-footnote-ref>1</a></sup>。
+数字标签也可用<sup><a href="#fn-42" id="fnref-42" data-footnote-ref>3</a></sup>。未定义的标签保持原文[^missing]。</p>
+<p>正文在定义之后继续，最后再次引用中文脚注<sup><a href="#fn-%E4%B8%AD%E6%96%87" id="fnref-%E4%B8%AD%E6%96%87-2" data-footnote-ref>2</a></sup>。</p>
+<section data-footnotes>
+<ol>
+<li id="fn-later">
+<p>First referenced note，定义顺序与引用顺序不同。</p>
+<p>第二段保留段落结构。</p>
+<ul>
+<li>脚注里的列表 one</li>
+<li>脚注里的列表 two</li>
+</ul>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">footnote code
+  indented
+</code></pre>
+<a href="#fnref-later" data-footnote-backref data-footnote-backref-idx="1" aria-label="Back to reference 1">↩</a> <a href="#fnref-later-2" data-footnote-backref data-footnote-backref-idx="1-2" aria-label="Back to reference 1-2">↩<sup>2</sup></a>
+</li>
+<li id="fn-%E4%B8%AD%E6%96%87">
+<p>中文脚注，含 <strong>加粗</strong>、<em>斜体</em>、<del>删除线</del> 和 <code style="font-family:monospace;background-color:#f5f5f5">inline code</code>。 <a href="#fnref-%E4%B8%AD%E6%96%87" data-footnote-backref data-footnote-backref-idx="2" aria-label="Back to reference 2">↩</a> <a href="#fnref-%E4%B8%AD%E6%96%87-2" data-footnote-backref data-footnote-backref-idx="2-2" aria-label="Back to reference 2-2">↩<sup>2</sup></a></p>
+</li>
+<li id="fn-42">
+<p>数字标签并不决定显示编号，参见 <a href="https://example.com/note">来源</a>。 <a href="#fnref-42" data-footnote-backref data-footnote-backref-idx="3" aria-label="Back to reference 3">↩</a></p>
+</li>
+</ol>
+</section>
+</body></html>
+<EOF>

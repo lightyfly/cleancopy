@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use cleancopy_core::{render_markdown, render_plain};
+use cleancopy_core::{render_html, render_markdown, render_plain};
 
 #[test]
 fn fixture_snapshots() {
@@ -29,6 +29,7 @@ fn fixture_snapshots() {
             // An EOF marker keeps trailing newlines visible in insta's text snapshots.
             insta::assert_snapshot!(format!("{name}__plain"), format!("{plain}<EOF>"));
             insta::assert_snapshot!(format!("{name}__markdown"), markdown);
+            insta::assert_snapshot!(format!("{name}__html"), format!("{}<EOF>", render_html(&input)));
         }
     });
 }

@@ -1,0 +1,86 @@
+---
+source: crates/cleancopy-core/tests/golden.rs
+expression: "format!(\"{}<EOF>\", render_html(&input))"
+---
+<html><body>
+<h1>CleanCopy 综合样例 Kitchen Sink</h1>
+<p>中英混排 Chinese + English，<strong>加粗 bold</strong>、<em>斜体 italic</em>、<del>删除 deleted</del>，以及 <code style="font-family:monospace;background-color:#f5f5f5">cargo build --release</code>。</p>
+<h2>列表 Lists</h2>
+<ul>
+<li>第一项 apple
+<ul>
+<li>第二层 nested
+<ul>
+<li>第三层 leaf</li>
+</ul>
+</li>
+<li>第二层 another</li>
+</ul>
+</li>
+<li>第二项 banana</li>
+</ul>
+<ol start="7">
+<li>从七开始 start at seven</li>
+<li>接着是八 eight</li>
+</ol>
+<ul>
+<li>☐ 待办 todo</li>
+<li>☑ 完成 done</li>
+</ul>
+<h3>引用 Quotes</h3>
+<blockquote>
+<p>第一行 quoted <strong>重点</strong>。</p>
+<p>第二段包含 <a href="https://example.com/docs">文档 docs</a>。</p>
+<blockquote>
+<p>内层引用 nested quote。</p>
+</blockquote>
+</blockquote>
+<h4>表格 Tables</h4>
+<table border="1" style="border-collapse:collapse">
+<thead>
+<tr>
+<th style="padding:6px 12px" align="left">语言 Language</th>
+<th style="padding:6px 12px" align="center">分发</th>
+<th style="padding:6px 12px" align="right">状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:6px 12px" align="left">Rust</td>
+<td style="padding:6px 12px" align="center">单二进制</td>
+<td style="padding:6px 12px" align="right"><strong>可用</strong></td>
+</tr>
+<tr>
+<td style="padding:6px 12px" align="left">Go</td>
+<td style="padding:6px 12px" align="center">单二进制</td>
+<td style="padding:6px 12px" align="right"><del>旧版</del></td>
+</tr>
+</tbody>
+</table>
+<h5>链接 Links、图片 Images 与 HTML</h5>
+<p><a href="https://example.com/docs" title="文档 title">CleanCopy 文档</a>，
+<a href="https://example.com">https://example.com</a>，
+<a href="https://example.com/auto">https://example.com/auto</a>，www.example.org，<a href="mailto:hello@example.com">hello@example.com</a>。</p>
+<p><img src="https://example.com/diagram.png" alt="中文 alt / diagram" title="图片 title" /></p>
+<p>内联 &lt;span class=&quot;label&quot;&gt;保留 HTML 文字&lt;/span&gt;，&lt;strong&gt;强调 emphasis&lt;/strong&gt; 和 &lt;br&gt; 换行。</p>
+<h6>代码 Code 与脚注 Footnotes</h6>
+<p>下面有两个空格的硬换行。<br />
+这一行使用 soft
+break，并带脚注<sup><a href="#fn-note" id="fnref-note" data-footnote-ref>1</a></sup>。</p>
+<pre style="font-family:monospace;background-color:#f5f5f5;padding:12px"><code style="font-family:monospace;background-color:#f5f5f5">fn main() {
+    let message = &quot;你好 world&quot;;
+
+    println!(&quot;{message}&quot;);
+}
+</code></pre>
+<hr />
+<p>正文结束，再次引用同一脚注<sup><a href="#fn-note" id="fnref-note-2" data-footnote-ref>1</a></sup>。</p>
+<section data-footnotes>
+<ol>
+<li id="fn-note">
+<p>脚注内容 footnote，含 <strong>重点</strong> 与 <a href="https://example.com/source">来源</a>。 <a href="#fnref-note" data-footnote-backref data-footnote-backref-idx="1" aria-label="Back to reference 1">↩</a> <a href="#fnref-note-2" data-footnote-backref data-footnote-backref-idx="1-2" aria-label="Back to reference 1-2">↩<sup>2</sup></a></p>
+</li>
+</ol>
+</section>
+</body></html>
+<EOF>

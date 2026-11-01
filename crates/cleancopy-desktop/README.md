@@ -1,10 +1,68 @@
-# CleanCopy desktop — Stage A
+# CleanCopy desktop — Stage B
 
-This crate is a **headless library**, not a running desktop application. The
-future `cleancopy-app` binary will supply native platform adapters and the GUI.
-There is deliberately no egui/eframe dependency, tray, global hotkey registration,
-window, or simulated keyboard input in this stage. Existing CLI behavior is
-unchanged.
+This crate supplies the headless paste engine and the `cleancopy-app` desktop UI.
+Stage B uses eframe/egui with the Glow renderer and X11 window backend on Linux.
+It deliberately does **not** register global hotkeys or an OS tray icon, discover
+native foreground applications, inject paste/undo input, or manipulate the system
+clipboard through the paste engine. UI actions use an in-memory demo platform;
+the settings editor may use the normal text-editor clipboard. Existing CLI
+behavior is unchanged.
+
+## Run the UI
+
+```sh
+cargo run -p cleancopy-desktop --bin cleancopy-app
+# Isolated persistent settings file:
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --config /tmp/cleancopy.toml
+# Session-only demo data (also ignores --config):
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview menu
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview menu-secondary
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview settings
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview tray
+```
+
+Normal settings edits save immediately with atomic replacement; errors appear in
+an error window with a retry button. Previews never load or save user settings.
+Silent mode defaults **on**, superseding the older design mockup. Menus support
+arrow navigation, Enter, Escape and numeric accelerators; paste/undo effects are
+simulated. Tray preview contains tray-menu content, not tray registration.
+
+CJK fonts are loaded at runtime, preferring Noto Sans CJK under
+`/usr/share/fonts`, with fallback discovery under that directory and
+`~/.local/share/fonts`. No system font files are embedded or checked in. If no
+font is found, egui's built-in fonts remain available, but CJK coverage may be
+incomplete.
+
+### Headless preview capture
+
+Build the app and development-only X11 screenshot helper first:
+
+```sh
+cargo build -p cleancopy-desktop --bin cleancopy-app --example screenshot
+xvfb-run -a -s "-screen 0 1280x800x24" sh -c '
+  target/debug/cleancopy-app --preview settings &
+  app=$!
+  sleep 2
+  window=$(xdotool search --sync --onlyvisible --name "^CleanCopy$" | sort -n | tail -n 1)
+  target/debug/examples/screenshot /tmp/settings.png "$window"
+  kill "$app"
+  wait "$app" || true
+'
+```
+
+Repeat with `menu`, `menu-secondary`, and `tray` to capture all views. The checked-in
+captures are under `docs/screenshots/`. The helper uses X11 GetImage, so no GTK,
+ImageMagick, or system development-package installation is required. Xvfb,
+xdotool and a working OpenGL/Mesa runtime are needed for this capture recipe.
+
+The resolved feature graph, not just the manifest, must remain X11-only:
+
+```sh
+cargo tree -p cleancopy-desktop -e features
+```
+
+See `vendor/egui-winit/PATCH.md` for the feature-only upstream patch that removes
+Wayland clipboard dependencies from the X11 build.
 
 ## Product decisions
 
@@ -40,8 +98,8 @@ Default rules include TextEdit/notepad/gedit → numbered plain text, Word/WPS �
 Word rich text, and Notion/Obsidian → unchanged Markdown. Matching uses exact,
 ASCII-case-insensitive bundle ID, executable basename, or X11 WM_CLASS. Bundle
 IDs outrank executable names, which outrank WM_CLASS. Menu changes and remembered
-rules mutate configuration in memory; a future application driver must persist
-changes using `Config::save` and surface save failures.
+rules mutate configuration in memory; the Stage B application driver persists
+changes using `Config::save` and surfaces save failures.
 
 ## Renderers
 
@@ -101,11 +159,11 @@ real clipboard, or retry input injection.
 
 ## Scope and remaining native work
 
-The supplied `docs/desktop/*.html` and `base.css` remain authoritative for future
-GUI visuals. Stage A does not implement GUI layout, accessibility permissions,
-focus/caret discovery, clipboard ownership lifetimes, HTML-only clipboard import,
-mixed-image placeholders, background conversion/progress UI, or native hotkey
-conflict checks. Those require a platform driver and later desktop stages.
+The supplied `docs/desktop/*.html` and `base.css` are the visual references for
+the Stage B GUI. Native accessibility permissions, focus/caret discovery,
+clipboard ownership lifetimes, HTML-only clipboard import, mixed-image
+placeholders, background conversion/progress UI, and native hotkey conflict
+checks remain later-stage work requiring platform drivers.
 
 Tests use a mock platform and explicit timestamps; they do not mutate the real
 system clipboard. Run workspace checks from the repository root:

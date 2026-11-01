@@ -21,6 +21,11 @@ insta = "1.42"
 cleancopy-core = { path = "crates/cleancopy-core" }
 cleancopy-clipboard = { path = "crates/cleancopy-clipboard" }
 
+[patch.crates-io]
+# eframe enables egui-winit/clipboard unconditionally. Gate its optional
+# smithay clipboard behind wayland instead, keeping the X11 build Wayland-free.
+egui-winit = { path = "vendor/egui-winit" }
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

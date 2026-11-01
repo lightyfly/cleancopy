@@ -3,11 +3,21 @@ name = "cleancopy-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Headless configuration and paste engine for the future CleanCopy desktop app"
+description = "CleanCopy desktop UI, configuration, and paste engine"
+
+[[bin]]
+name = "cleancopy-app"
+path = "src/main.rs"
 
 [dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11"] }
+clap.workspace = true
 cleancopy-core = { path = "../cleancopy-core" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "6"
 tempfile = "3"
+
+[dev-dependencies]
+x11rb = "0.13"
+png = "0.17"

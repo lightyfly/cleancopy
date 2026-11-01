@@ -216,6 +216,13 @@ impl<P: Platform> Engine<P> {
     pub fn config(&self) -> &Config {
         &self.config
     }
+    /// Apply settings only after cancelling pending menu/capture work. A clipboard
+    /// restoration already in flight is retained and serviced normally.
+    pub fn update_config(&mut self, config: Config) -> Result<(), P::Error> {
+        self.cancel()?;
+        self.config = config;
+        Ok(())
+    }
     pub fn platform(&self) -> &P {
         &self.platform
     }
@@ -597,6 +604,247 @@ fn render(original: &Snapshot, format: Format, style: cleancopy_core::NumberingS
                 .formats
                 .insert(TEXT_RTF.into(), render_rtf(source).into_bytes());
             result
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct MockPlatform {
+        clipboard: Snapshot,
+        writes: Vec<Snapshot>,
+        menus: Vec<MenuModel>,
+        pastes: usize,
+        hides: usize,
+        fail_hide: bool,
+        fail_write: bool,
+    }
+
+    impl Platform for MockPlatform {
+        type Error = &'static str;
+
+        fn frontmost_app(&mut self) -> Result<AppIdentity, Self::Error> {
+            Ok(AppIdentity {
+                exe: Some("WINWORD.EXE".into()),
+                ..AppIdentity::default()
+            })
+        }
+        fn read_clipboard(&mut self) -> Result<Snapshot, Self::Error> {
+            Ok(self.clipboard.clone())
+        }
+        fn write_clipboard(&mut self, snapshot: Snapshot) -> Result<(), Self::Error> {
+            if std::mem::take(&mut self.fail_write) {
+                return Err("write");
+            }
+            self.writes.push(snapshot.clone());
+            self.clipboard = snapshot;
+            Ok(())
+        }
+        fn send_paste(&mut self) -> Result<(), Self::Error> {
+            self.pastes += 1;
+            Ok(())
+        }
+        fn send_undo(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn show_menu(&mut self, model: MenuModel) -> Result<(), Self::Error> {
+            self.menus.push(model);
+            Ok(())
+        }
+        fn hide_menu(&mut self) -> Result<(), Self::Error> {
+            self.hides += 1;
+            if std::mem::take(&mut self.fail_hide) {
+                return Err("hide");
+            }
+            Ok(())
+        }
+        fn notify(&mut self, _: &str) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn now(&self) -> u64 {
+            0
+        }
+    }
+
+    fn engine() -> Engine<MockPlatform> {
+        let mut clipboard = Snapshot::text("# Original\r\n\r\n**bold**");
+        clipboard
+            .formats
+            .insert("native/opaque".into(), vec![0, 255, 128, 13]);
+        Engine::new(
+            Config::default(),
+            MockPlatform {
+                clipboard,
+                ..MockPlatform::default()
+            },
+        )
+    }
+
+    #[test]
+    fn update_config_and_cancel_preserve_restoration_and_retry_deadlines() {
+        for retry in [false, true] {
+            let mut engine = engine();
+            let original = engine.platform().clipboard.clone();
+            engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+            engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
+            let written = engine.platform().clipboard.clone();
+            assert_ne!(written, original);
+            let mut deadline = DOUBLE_PRESS_MS + RESTORE_DELAY_MS;
+            if retry {
+                engine.platform_mut().fail_write = true;
+                assert_eq!(engine.handle(Event::Timer { t: deadline }), Err("write"));
+                deadline += RESTORE_DELAY_MS;
+            }
+
+            let mut config = engine.config().clone();
+            config.silent_mode = false;
+            config.paused_until = Some(10_000);
+            engine.update_config(config).unwrap();
+            engine.handle(Event::Cancel { t: deadline - 2 }).unwrap();
+            assert!(!engine.config().silent_mode);
+            assert_eq!(engine.config().paused_until, Some(10_000));
+            assert_eq!(engine.next_deadline(), Some(deadline));
+            assert_eq!(engine.platform().clipboard, written);
+            assert_eq!(engine.platform().writes.len(), 1);
+
+            engine
+                .handle(Event::HotkeyPressed { t: deadline - 1 })
+                .unwrap();
+            engine.handle(Event::Timer { t: deadline - 1 }).unwrap();
+            assert_eq!(engine.platform().clipboard, written);
+            engine.handle(Event::Timer { t: deadline }).unwrap();
+            assert_eq!(engine.platform().clipboard, original);
+            assert_eq!(engine.platform().writes.len(), 2);
+            assert_eq!(engine.platform().pastes, 1);
+            assert!(engine.platform().menus.is_empty());
+            assert_eq!(engine.next_deadline(), None);
+        }
+    }
+
+    #[test]
+    fn update_config_does_not_restore_over_newer_clipboard() {
+        let mut engine = engine();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
+        engine.update_config(Config::default()).unwrap();
+        let newer = Snapshot::text("new external copy");
+        engine.platform_mut().clipboard = newer.clone();
+        engine
+            .handle(Event::Timer {
+                t: DOUBLE_PRESS_MS + RESTORE_DELAY_MS,
+            })
+            .unwrap();
+        assert_eq!(engine.platform().clipboard, newer);
+        assert_eq!(engine.platform().writes.len(), 1);
+        assert_eq!(engine.next_deadline(), None);
+    }
+
+    #[test]
+    fn update_config_cancels_pending_capture_before_applying_settings() {
+        let mut engine = engine();
+        let original = engine.platform().clipboard.clone();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        assert_eq!(engine.next_deadline(), Some(DOUBLE_PRESS_MS));
+        let config = Config {
+            silent_mode: false,
+            ..Config::default()
+        };
+        engine.update_config(config).unwrap();
+        assert_eq!(engine.next_deadline(), None);
+        engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
+        assert_eq!(engine.platform().pastes, 0);
+        assert!(engine.platform().writes.is_empty());
+        assert!(engine.platform().menus.is_empty());
+        assert_eq!(engine.platform().clipboard, original);
+
+        engine
+            .handle(Event::HotkeyPressed {
+                t: DOUBLE_PRESS_MS + 1,
+            })
+            .unwrap();
+        assert_eq!(engine.platform().menus.len(), 1);
+        assert_eq!(engine.platform().menus[0].kind, MenuKind::Full);
+        assert_eq!(engine.next_deadline(), None);
+    }
+
+    #[test]
+    fn update_config_invalidates_menu_even_when_hiding_fails() {
+        for fail_hide in [false, true] {
+            let mut engine = engine();
+            let original = engine.platform().clipboard.clone();
+            engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+            engine.handle(Event::HotkeyPressed { t: 1 }).unwrap();
+            let id = engine.platform().menus[0].id;
+            engine.platform_mut().fail_hide = fail_hide;
+            let config = Config {
+                silent_mode: false,
+                ..Config::default()
+            };
+            assert_eq!(
+                engine.update_config(config),
+                if fail_hide { Err("hide") } else { Ok(()) }
+            );
+            // A failed cancellation does not apply the replacement configuration,
+            // but the old menu must still be unable to trigger work.
+            assert_eq!(engine.config().silent_mode, fail_hide);
+            for event in [
+                Event::MenuChoice {
+                    t: 2,
+                    id,
+                    choice: Choice::Format(Format::WordRichText),
+                },
+                Event::MenuKey {
+                    t: 3,
+                    id,
+                    key: MenuKey::Enter,
+                },
+                Event::Remember {
+                    t: 4,
+                    id,
+                    checked: true,
+                },
+                Event::MenuKey {
+                    t: 5,
+                    id,
+                    key: MenuKey::Escape,
+                },
+                Event::Timer { t: DOUBLE_PRESS_MS },
+            ] {
+                engine.handle(event).unwrap();
+            }
+            assert_eq!(engine.platform().hides, 1);
+            assert_eq!(engine.platform().menus.len(), 1);
+            assert_eq!(engine.platform().pastes, 0);
+            assert!(engine.platform().writes.is_empty());
+            assert_eq!(engine.platform().clipboard, original);
+            assert_eq!(engine.next_deadline(), None);
+
+            // Retrying a failed update does not try to dismiss the invalid menu again.
+            engine
+                .update_config(Config {
+                    silent_mode: false,
+                    ..Config::default()
+                })
+                .unwrap();
+            engine
+                .handle(Event::HotkeyPressed {
+                    t: DOUBLE_PRESS_MS + 1,
+                })
+                .unwrap();
+            assert_eq!(engine.platform().hides, 1);
+            assert_eq!(engine.platform().menus.len(), 2);
+            assert_ne!(engine.platform().menus[1].id, id);
+            engine
+                .handle(Event::MenuKey {
+                    t: DOUBLE_PRESS_MS + 2,
+                    id,
+                    key: MenuKey::Escape,
+                })
+                .unwrap();
+            assert!(engine.menu.is_some());
         }
     }
 }

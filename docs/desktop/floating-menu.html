@@ -1,0 +1,36 @@
+<html><head><link rel="stylesheet" href="base.css"><style>
+body{width:960px;height:600px;background:linear-gradient(135deg,#E9EAF2,#F6F4F0)}
+.win{position:absolute;left:60px;top:50px;width:840px;height:500px;background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.12);overflow:hidden}
+.tb{height:38px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:8px;background:#FAFAFA}
+.dot{width:12px;height:12px;border-radius:50%}
+.tt{flex:1;text-align:center;color:var(--sub);font-size:12px;margin-right:52px}
+.doc{padding:36px 56px;line-height:1.9;color:#333;font-size:14px}
+.caret{display:inline-block;width:1.5px;height:17px;background:var(--accent);vertical-align:-3px}
+.m1{position:absolute;left:250px;top:190px;width:320px}
+.m2{position:absolute;left:574px;top:232px;width:248px}
+.badge{font-size:11px;padding:2px 7px;border-radius:5px;background:var(--accentbg);color:var(--accent);font-weight:500}
+.chip{white-space:nowrap;display:flex;align-items:center;gap:8px;padding:8px 10px 6px;color:var(--sub);font-size:12px}
+.chip b{color:var(--text);font-weight:500}
+.warn{color:#B25E09;background:#FFF4E5;padding:2px 7px;border-radius:5px;font-size:11px}
+.foot{display:flex;justify-content:space-between;padding:6px 10px 2px;color:var(--mute);font-size:11px;border-top:1px solid var(--line);margin-top:5px}
+</style></head><body>
+<div class="win"><div class="tb"><div class="dot" style="background:#FF5F57"></div><div class="dot" style="background:#FEBC2E"></div><div class="dot" style="background:#28C840"></div><div class="tt">未命名 — 某未知编辑器</div></div>
+<div class="doc">会议纪要已整理如下：<br><span class="caret"></span></div></div>
+<div class="menu m1">
+ <div class="chip">剪贴板 <b>Markdown · 1,284 字</b><span style="flex:1"></span><span class="warn">未识别目标</span></div>
+ <div class="sep"></div>
+ <div class="item"><span class="ic">⌁</span><span class="lb">粘贴原文</span><span class="kbd"><span>1</span></span></div>
+ <div class="item on"><span class="ic">✦</span><span class="lb">粘贴格式化文本</span><span class="hint">›</span></div>
+ <div class="item"><span class="ic">↺</span><span class="lb">撤销上次转换</span><span class="kbd"><span>⌘</span><span>Z</span></span></div>
+ <div class="foot"><span>↑↓ 选择 · ↵ 粘贴 · esc 取消</span><span>CleanCopy</span></div>
+</div>
+<div class="menu m2">
+ <div class="hd">选择目标格式</div>
+ <div class="item on"><span class="ic">¶</span><span class="lb">纯文本 · 中文序号</span><span class="kbd"><span>2</span></span></div>
+ <div class="item"><span class="ic">W</span><span class="lb">Word / WPS 富文本</span><span class="kbd"><span>3</span></span></div>
+ <div class="item"><span class="ic">#</span><span class="lb">Markdown 原样</span><span class="kbd"><span>4</span></span></div>
+ <div class="item"><span class="ic">T</span><span class="lb">纯文本 · 去符号</span><span class="kbd"><span>5</span></span></div>
+ <div class="sep"></div>
+ <div class="item"><span class="ic">✓</span><span class="lb" style="color:var(--sub)">记住此 App 的选择</span></div>
+</div>
+</body></html>

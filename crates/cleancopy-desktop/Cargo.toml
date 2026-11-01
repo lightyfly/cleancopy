@@ -1,0 +1,13 @@
+[package]
+name = "cleancopy-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless configuration and paste engine for the future CleanCopy desktop app"
+
+[dependencies]
+cleancopy-core = { path = "../cleancopy-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+tempfile = "3"

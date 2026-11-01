@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/cleancopy-core", "crates/cleancopy-clipboard", "crates/cleancopy-cli"]
+members = [
+    "crates/cleancopy-core",
+    "crates/cleancopy-clipboard",
+    "crates/cleancopy-cli",
+    "crates/cleancopy-desktop",
+]
 resolver = "2"
 
 [workspace.package]

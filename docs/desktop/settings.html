@@ -1,0 +1,75 @@
+<html><head><link rel="stylesheet" href="base.css"><style>
+body{width:1200px;height:780px;background:linear-gradient(135deg,#E6E8F0,#F3F1EC);padding:30px 40px}
+.w{width:1120px;height:720px;background:var(--panel);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.14);overflow:hidden;display:flex;flex-direction:column}
+.tb{height:44px;display:flex;align-items:center;padding:0 16px;gap:8px;border-bottom:1px solid var(--line)}
+.dot{width:12px;height:12px;border-radius:50%}
+.tt{flex:1;text-align:center;font-weight:600;margin-right:52px}
+.body{flex:1;display:flex;min-height:0}
+.left{width:440px;border-right:1px solid var(--line);padding:20px 24px;overflow:hidden}
+.sec{margin-bottom:22px}
+.st{font-size:11px;font-weight:600;color:var(--mute);letter-spacing:.04em;margin-bottom:8px;display:flex;justify-content:space-between}
+.st a{color:var(--accent);font-weight:500;letter-spacing:0}
+.card{border:1px solid var(--line);border-radius:var(--r)}
+.row{height:38px;display:flex;align-items:center;padding:0 12px;gap:10px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row.act{background:#F7F7FD}
+.ai{width:20px;height:20px;border-radius:5px;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.sel{margin-left:auto;height:24px;padding:0 8px;border:1px solid var(--line);border-radius:6px;display:flex;align-items:center;gap:6px;font-size:12px;background:#fff;min-width:150px;justify-content:space-between}
+.sel:after{content:"⌄";color:var(--mute)}
+.cb{width:15px;height:15px;border-radius:4px;background:var(--accent);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center}
+.cb.off{background:#fff;border:1px solid #C7C7CC}
+.grip{color:#C7C7CC;letter-spacing:-2px}
+.seg{display:flex;background:#F0F0F3;border-radius:7px;padding:2px}.seg span{flex:1;text-align:center;padding:4px 0;font-size:12px;border-radius:5px;color:var(--sub)}.seg .a{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.1);font-weight:500}
+.right{flex:1;display:flex;flex-direction:column;background:#FAFAFB;min-width:0}
+.ph{height:44px;display:flex;align-items:center;padding:0 20px;gap:10px;border-bottom:1px solid var(--line)}
+.panes{flex:1;display:flex;min-height:0}
+.pane{flex:1;padding:16px 20px;overflow:hidden}
+.pane+.pane{border-left:1px solid var(--line);background:#fff}
+.lab{font-size:11px;color:var(--mute);font-weight:600;margin-bottom:10px}
+pre{font:12px/1.75 "SF Mono","JetBrains Mono","DejaVu Sans Mono","Noto Sans CJK SC",monospace;color:#444;white-space:pre-wrap}
+pre .m{color:var(--accent)}
+.out{font:13px/1.85 "Noto Sans CJK SC",sans-serif;color:#222;white-space:pre}
+.fb{height:36px;border-top:1px solid var(--line);display:flex;align-items:center;padding:0 20px;color:var(--mute);font-size:12px;gap:16px}
+</style></head><body><div class="w">
+<div class="tb"><div class="dot" style="background:#FF5F57"></div><div class="dot" style="background:#FEBC2E"></div><div class="dot" style="background:#28C840"></div><div class="tt">CleanCopy 设置</div></div>
+<div class="body"><div class="left">
+ <div class="sec"><div class="st">目标 App → 粘贴格式<a>＋ 添加 App</a></div><div class="card">
+  <div class="row act"><div class="ai" style="background:#6B7280">TXT</div>文本编辑 / 记事本<div class="sel">纯文本 · 中文序号</div></div>
+  <div class="row"><div class="ai" style="background:#2B5CD8">W</div>Microsoft Word<div class="sel">Word 富文本</div></div>
+  <div class="row"><div class="ai" style="background:#D8452B">W</div>WPS 文字<div class="sel">Word 富文本</div></div>
+  <div class="row"><div class="ai" style="background:#111">N</div>Notion / Obsidian<div class="sel">Markdown 原样</div></div>
+  <div class="row"><div class="ai" style="background:#C7C7CC">?</div><span style="color:var(--sub)">其他 App</span><div class="sel">弹出格式菜单</div></div>
+ </div></div>
+ <div class="sec"><div class="st">中文序号风格</div><div class="seg"><span class="a">一、（一）1.（1）</span><span>一、1. (1)</span><span>1. 1.1 1.1.1</span></div></div>
+ <div class="sec"><div class="st">二级格式菜单（勾选显示 · 拖动排序）</div><div class="card">
+  <div class="row"><span class="grip">⋮⋮</span><div class="cb">✓</div>纯文本 · 中文序号<span style="margin-left:auto" class="kbd"><span>2</span></span></div>
+  <div class="row"><span class="grip">⋮⋮</span><div class="cb">✓</div>Word / WPS 富文本<span style="margin-left:auto" class="kbd"><span>3</span></span></div>
+  <div class="row"><span class="grip">⋮⋮</span><div class="cb">✓</div>Markdown 原样<span style="margin-left:auto" class="kbd"><span>4</span></span></div>
+  <div class="row"><span class="grip">⋮⋮</span><div class="cb off"></div><span style="color:var(--sub)">HTML 源码</span></div>
+ </div></div>
+ <div class="sec" style="display:flex;justify-content:space-between;align-items:center"><div class="st" style="margin:0">唤出快捷键</div><span class="kbd"><span>⌘</span><span>⇧</span><span>V</span></span></div>
+</div>
+<div class="right">
+ <div class="ph"><b style="font-weight:600">实时预览</b><span style="color:var(--mute)">·</span><span style="color:var(--sub)">当前：文本编辑 / 记事本</span><span style="flex:1"></span><div class="seg" style="width:220px"><span class="a">纯文本</span><span>Word</span><span>Markdown</span></div></div>
+ <div class="panes"><div class="pane"><div class="lab">示例 MARKDOWN（可编辑）</div><pre><span class="m">#</span> 项目周报
+<span class="m">##</span> 本周进展
+<span class="m">-</span> 完成 <span class="m">**</span>剪贴板监听<span class="m">**</span>
+<span class="m">-</span> 接入 Word 富文本
+  <span class="m">-</span> 标题映射 标题1/2
+  <span class="m">-</span> 表格与代码块
+<span class="m">##</span> 下周计划
+<span class="m">1.</span> Windows 托盘
+<span class="m">2.</span> 识别失败兜底</pre></div>
+ <div class="pane"><div class="lab">粘贴效果</div><div class="out">项目周报
+
+一、本周进展
+（一）完成剪贴板监听
+（二）接入 Word 富文本
+    1. 标题映射 标题1/2
+    2. 表格与代码块
+
+二、下周计划
+（一）Windows 托盘
+（二）识别失败兜底</div></div></div>
+ <div class="fb"><span>改动即时生效</span><span>·</span><span>恢复默认</span></div>
+</div></div></div></body></html>

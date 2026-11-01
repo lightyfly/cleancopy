@@ -1,6 +1,15 @@
 //! Platform-independent Markdown parsing and renderers.
 
+pub mod detect;
 pub mod parse;
+pub mod render_numbered;
+pub mod render_rtf;
+pub mod render_word_html;
+
+pub use detect::is_markdown;
+pub use render_numbered::{render_numbered, NumberingStyle};
+pub use render_rtf::render_rtf;
+pub use render_word_html::render_word_html;
 pub mod render_html;
 pub mod render_md;
 pub mod render_plain;

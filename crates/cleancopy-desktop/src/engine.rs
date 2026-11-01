@@ -59,6 +59,8 @@ pub trait Platform {
     fn show_menu(&mut self, model: MenuModel) -> Result<(), Self::Error>;
     fn hide_menu(&mut self) -> Result<(), Self::Error>;
     fn notify(&mut self, message: &str) -> Result<(), Self::Error>;
+    /// Nondecreasing Unix milliseconds, shared with persisted pause/history values.
+    fn now(&self) -> u64;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +101,19 @@ pub struct MenuModel {
     pub remember: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuKey {
+    Digit(u8),
+    Enter,
+    Escape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
+    MenuKey {
+        t: u64,
+        id: u64,
+        key: MenuKey,
+    },
     HotkeyPressed {
         t: u64,
     },
@@ -134,7 +148,8 @@ pub enum Event {
 impl Event {
     fn time(self) -> u64 {
         match self {
-            Self::HotkeyPressed { t }
+            Self::MenuKey { t, .. }
+            | Self::HotkeyPressed { t }
             | Self::Timer { t }
             | Self::MenuChoice { t, .. }
             | Self::Remember { t, .. }
@@ -213,6 +228,18 @@ impl<P: Platform> Engine<P> {
             .map(|r| r.deadline)
             .or_else(|| self.pending.as_ref().map(|p| p.deadline))
     }
+    /// Dispatch a native hotkey using the injected clock.
+    pub fn hotkey_pressed(&mut self) -> Result<(), P::Error> {
+        self.handle(Event::HotkeyPressed {
+            t: self.platform.now(),
+        })
+    }
+    /// Service scheduled work using the same clock as native hotkeys.
+    pub fn tick(&mut self) -> Result<(), P::Error> {
+        self.handle(Event::Timer {
+            t: self.platform.now(),
+        })
+    }
     pub fn handle(&mut self, event: Event) -> Result<(), P::Error> {
         let t = event.time();
         if t < self.now {
@@ -220,6 +247,26 @@ impl<P: Platform> Engine<P> {
         }
         self.now = t;
         match event {
+            Event::MenuKey { id, key, .. } => {
+                let Some(menu) = self.menu.as_ref().filter(|menu| menu.model.id == id) else {
+                    return Ok(());
+                };
+                let choice = match key {
+                    MenuKey::Escape => return self.cancel(),
+                    MenuKey::Enter => Some(menu.model.default_choice),
+                    MenuKey::Digit(1) => Some(Choice::Original),
+                    MenuKey::Digit(digit) => menu
+                        .model
+                        .formats
+                        .iter()
+                        .find(|item| item.shortcut == digit)
+                        .map(|item| Choice::Format(item.format)),
+                };
+                if let Some(choice) = choice {
+                    self.handle(Event::MenuChoice { t, id, choice })?;
+                }
+                Ok(())
+            }
             Event::Timer { .. } => {
                 if self.restoring.as_ref().is_some_and(|r| t >= r.deadline) {
                     return self.restore(t);
@@ -359,6 +406,7 @@ impl<P: Platform> Engine<P> {
         let default_choice = if capture.markdown && capture.convertible {
             self.config
                 .format_for(&capture.app)
+                .filter(|format| formats.contains(format))
                 .or_else(|| formats.first().copied())
                 .map(Choice::Format)
                 .unwrap_or(Choice::Original)

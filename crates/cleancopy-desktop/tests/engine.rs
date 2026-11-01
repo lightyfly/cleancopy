@@ -15,9 +15,13 @@ struct Mock {
     notices: Vec<String>,
     fail: Option<&'static str>,
     focus_after_write: Option<AppIdentity>,
+    now: u64,
+    pasted: Vec<Snapshot>,
+    effects: Vec<&'static str>,
 }
 impl Mock {
     fn check(&mut self, effect: &'static str) -> Result<(), &'static str> {
+        self.effects.push(effect);
         if self.fail == Some(effect) {
             self.fail = None;
             Err(effect)
@@ -28,6 +32,9 @@ impl Mock {
 }
 impl Platform for Mock {
     type Error = &'static str;
+    fn now(&self) -> u64 {
+        self.now
+    }
     fn frontmost_app(&mut self) -> Result<AppIdentity, Self::Error> {
         self.check("front")?;
         Ok(self.app.clone())
@@ -48,6 +55,7 @@ impl Platform for Mock {
     fn send_paste(&mut self) -> Result<(), Self::Error> {
         self.check("paste")?;
         self.pastes += 1;
+        self.pasted.push(self.clipboard.clone());
         Ok(())
     }
     fn send_undo(&mut self) -> Result<(), Self::Error> {
@@ -638,4 +646,280 @@ fn each_selectable_format_works_and_invalid_utf8_is_raw() {
     hot(&mut e, 0);
     timer(&mut e, 400);
     assert!(e.platform().writes.is_empty());
+}
+
+fn opaque_original(text: &str) -> Snapshot {
+    let mut snapshot = Snapshot::text(text);
+    snapshot
+        .formats
+        .insert("native/private".into(), vec![0, 255, 128, 13, 10, 0]);
+    snapshot
+        .formats
+        .insert(TEXT_HTML.into(), b"original html\0\r\n".to_vec());
+    snapshot
+        .formats
+        .insert(TEXT_RTF.into(), b"original rtf\0".to_vec());
+    snapshot
+}
+
+fn key(e: &mut Engine<Mock>, t: u64, key: MenuKey) {
+    let id = e.platform().menus.last().unwrap().id;
+    e.handle(Event::MenuKey { t, id, key }).unwrap();
+}
+
+#[test]
+fn silent_numbered_rule_renders_expected_chinese_and_restores_all_formats() {
+    let mut e = engine("notepad.exe", "");
+    let original = opaque_original("# 项目周报\r\n\r\n## 本周进展\r\n- **完成**\r\n");
+    e.platform_mut().clipboard = original.clone();
+    hot(&mut e, 0);
+    timer(&mut e, 400);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(
+        e.platform().pasted,
+        vec![Snapshot::text("项目周报\n\n一、本周进展\n（一）完成")]
+    );
+    timer(&mut e, 550);
+    assert_eq!(e.platform().clipboard, original);
+}
+
+#[test]
+fn silent_markdown_rule_preserves_source_and_restores_opaque_original() {
+    let source = "# Title\r\n\r\n*emphasis*  \r\n";
+    let mut e = engine("Obsidian.exe", "");
+    let original = opaque_original(source);
+    e.platform_mut().clipboard = original.clone();
+    hot(&mut e, 0);
+    timer(&mut e, 400);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(
+        e.platform().pasted[0].formats[TEXT_MARKDOWN],
+        source.as_bytes()
+    );
+    assert_eq!(
+        e.platform().pasted[0].formats[TEXT_PLAIN],
+        source.as_bytes()
+    );
+    timer(&mut e, 550);
+    assert_eq!(e.platform().clipboard, original);
+}
+
+#[test]
+fn numeric_choices_one_through_five_restore_exact_original() {
+    for digit in 1..=5 {
+        let mut e = engine("unknown", "");
+        let original = opaque_original("# Title\r\n\r\n## Heading\r\n\r\n**bold**\r\n");
+        e.platform_mut().clipboard = original.clone();
+        hot(&mut e, 0);
+        timer(&mut e, 400);
+        key(&mut e, 401, MenuKey::Digit(digit));
+        assert_eq!(e.platform().pastes, 1);
+        assert_eq!(e.platform().hides, 1);
+        let pasted = &e.platform().pasted[0];
+        match digit {
+            1 => assert_eq!(pasted, &original),
+            2 => assert_eq!(pasted, &Snapshot::text("Title\n\n一、Heading\n\nbold")),
+            3 => {
+                assert!(pasted.formats[TEXT_HTML]
+                    .windows(11)
+                    .any(|w| w == b"MsoHeading1"));
+                assert!(pasted.formats[TEXT_RTF].starts_with(b"{\\rtf1"));
+            }
+            4 => assert_eq!(pasted.formats[TEXT_MARKDOWN], original.formats[TEXT_PLAIN]),
+            5 => assert_eq!(
+                pasted,
+                &Snapshot::text(cleancopy_core::render_plain(
+                    original.source_text().unwrap()
+                ))
+            ),
+            _ => unreachable!(),
+        }
+        timer(&mut e, 551);
+        assert_eq!(e.platform().clipboard, original, "choice {digit}");
+        assert_eq!(e.next_deadline(), None);
+    }
+}
+
+#[test]
+fn escape_cancels_secondary_and_full_without_any_clipboard_effect() {
+    for full in [false, true] {
+        let mut e = engine("unknown", "# Title");
+        let original = e.platform().clipboard.clone();
+        hot(&mut e, 0);
+        if full {
+            hot(&mut e, 1);
+        } else {
+            timer(&mut e, 400);
+        }
+        key(&mut e, 401, MenuKey::Escape);
+        timer(&mut e, 1000);
+        assert_eq!(e.platform().clipboard, original);
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().pastes, 0);
+        assert_eq!(e.platform().hides, 1);
+        assert_eq!(e.next_deadline(), None);
+    }
+}
+
+#[test]
+fn silent_off_opens_menu_on_every_completed_press() {
+    let mut e = Engine::new(
+        Config {
+            silent_mode: false,
+            ..Config::default()
+        },
+        Mock {
+            app: app("notepad.exe"),
+            clipboard: Snapshot::text("# Title"),
+            ..Mock::default()
+        },
+    );
+    for t in [0, 1000, 2000] {
+        hot(&mut e, t);
+        assert_eq!(e.platform().menus.last().unwrap().kind, MenuKind::Full);
+        assert_eq!(e.next_deadline(), None);
+        key(&mut e, t + 1, MenuKey::Digit(2));
+        timer(&mut e, t + 151);
+    }
+    assert_eq!(e.platform().menus.len(), 3);
+    assert_eq!(e.platform().pastes, 3);
+}
+
+#[test]
+fn unchecked_remember_does_not_create_rule_and_checked_choice_survives_toml() {
+    for checked in [false, true] {
+        let mut e = engine("custom-editor", "# Title");
+        hot(&mut e, 0);
+        timer(&mut e, 400);
+        let menu = e.platform().menus.last().unwrap().clone();
+        assert!(menu.show_remember);
+        assert!(!menu.remember);
+        e.handle(Event::Remember {
+            t: 401,
+            id: menu.id,
+            checked,
+        })
+        .unwrap();
+        key(&mut e, 402, MenuKey::Digit(3));
+        timer(&mut e, 552);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        e.config().save(&path).unwrap();
+        let config = Config::load(path).unwrap();
+        assert_eq!(
+            config.format_for(&app("custom-editor")),
+            checked.then_some(Format::WordRichText)
+        );
+        let mut reloaded = Engine::new(
+            config,
+            Mock {
+                app: app("custom-editor"),
+                clipboard: Snapshot::text("# Next"),
+                ..Mock::default()
+            },
+        );
+        hot(&mut reloaded, 1000);
+        timer(&mut reloaded, 1400);
+        assert_eq!(reloaded.platform().pastes, usize::from(checked));
+        assert_eq!(reloaded.platform().menus.len(), usize::from(!checked));
+    }
+}
+
+#[test]
+fn undo_effect_order_is_undo_then_original_paste_then_exact_current_restore() {
+    let mut e = engine("WINWORD.EXE", "");
+    let original = opaque_original("# Original\r\n");
+    e.platform_mut().clipboard = original.clone();
+    hot(&mut e, 0);
+    timer(&mut e, 400);
+    timer(&mut e, 550);
+    let current = opaque_original("new clipboard\r\n");
+    e.platform_mut().clipboard = current.clone();
+    e.platform_mut().effects.clear();
+    e.handle(Event::Undo { t: 600 }).unwrap();
+    assert_eq!(e.platform().pasted[1], original);
+    let effects = &e.platform().effects;
+    let undo = effects.iter().position(|&effect| effect == "undo").unwrap();
+    let write = effects
+        .iter()
+        .position(|&effect| effect == "write")
+        .unwrap();
+    let paste = effects
+        .iter()
+        .position(|&effect| effect == "paste")
+        .unwrap();
+    assert!(undo < write && write < paste);
+    timer(&mut e, 750);
+    assert_eq!(e.platform().clipboard, current);
+    assert_eq!(e.platform().effects.last(), Some(&"write"));
+}
+
+#[test]
+fn injected_clock_drives_deadlines_without_wall_clock_or_sleep() {
+    let mut e = engine("notepad.exe", "# Title");
+    e.platform_mut().now = 1000;
+    e.hotkey_pressed().unwrap();
+    assert_eq!(e.next_deadline(), Some(1400));
+    e.platform_mut().now = 1399;
+    e.tick().unwrap();
+    assert_eq!(e.platform().pastes, 0);
+    e.platform_mut().now = 1400;
+    e.tick().unwrap();
+    assert_eq!(e.platform().pastes, 1);
+    e.platform_mut().now = 1550;
+    e.tick().unwrap();
+    assert_eq!(e.platform().clipboard, Snapshot::text("# Title"));
+}
+
+#[test]
+fn disabled_mapped_format_does_not_become_an_unselectable_menu_default() {
+    let mut config = Config {
+        silent_mode: false,
+        ..Config::default()
+    };
+    config
+        .secondary_items
+        .iter_mut()
+        .find(|item| item.format == Format::WordRichText)
+        .unwrap()
+        .enabled = false;
+    let mut e = Engine::new(
+        config,
+        Mock {
+            app: app("WINWORD.EXE"),
+            clipboard: Snapshot::text("# Title"),
+            ..Mock::default()
+        },
+    );
+    hot(&mut e, 0);
+    assert_eq!(
+        e.platform().menus[0].default_choice,
+        Choice::Format(Format::ChineseNumbered)
+    );
+    key(&mut e, 1, MenuKey::Enter);
+    assert_eq!(e.platform().pastes, 1);
+}
+
+#[test]
+fn stale_escape_and_invalid_accelerators_cannot_dismiss_or_paste_new_menu() {
+    let mut e = engine("unknown", "# Title");
+    hot(&mut e, 0);
+    hot(&mut e, 1);
+    let old_id = e.platform().menus[0].id;
+    key(&mut e, 2, MenuKey::Escape);
+    hot(&mut e, 3);
+    hot(&mut e, 4);
+    e.handle(Event::MenuKey {
+        t: 5,
+        id: old_id,
+        key: MenuKey::Escape,
+    })
+    .unwrap();
+    for digit in [0, 6, 255] {
+        key(&mut e, 6, MenuKey::Digit(digit));
+    }
+    assert_eq!(e.platform().hides, 1);
+    assert_eq!(e.platform().pastes, 0);
+    key(&mut e, 7, MenuKey::Enter);
+    assert_eq!(e.platform().pastes, 1);
 }

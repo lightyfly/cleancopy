@@ -152,7 +152,7 @@ impl Config {
         } else {
             return;
         };
-        if let Some(rule) = self.app_rules.iter_mut().find(|rule| {
+        if let Some(index) = self.app_rules.iter().position(|rule| {
             let rule_rank = if nonempty(rule.app.bundle_id.as_deref()).is_some() {
                 3
             } else if nonempty(rule.app.exe.as_deref())
@@ -173,7 +173,11 @@ impl Config {
             .count();
             identifier_count == 1 && rule_rank == rank && rule.match_rank(&identity) == Some(rank)
         }) {
+            // A previously remembered rule may sit behind a multi-identifier
+            // alias with the same rank. The explicit choice must win next time.
+            let mut rule = self.app_rules.remove(index);
             rule.format = format;
+            self.app_rules.insert(0, rule);
         } else {
             // Insert before broader multi-identifier rules at equal specificity.
             self.app_rules.insert(

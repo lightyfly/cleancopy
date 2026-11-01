@@ -66,9 +66,13 @@ The platform-independent APIs live in `cleancopy-core`:
 ## Engine driver contract
 
 Construct `engine::Engine::new(config, platform)` with an implementation of
-`Platform`; effects return the adapter's associated error type. Feed timestamped
-`Event`s to `handle` and schedule `Timer` events using `next_deadline`. Timestamps
-are nondecreasing Unix milliseconds, matching persisted pause/history values.
+`Platform`; effects return the adapter's associated error type. Its `now` method
+supplies nondecreasing Unix milliseconds to `hotkey_pressed()` and `tick()`.
+Alternatively, feed explicitly timestamped `Event`s to `handle`; schedule timers
+using `next_deadline`. The same timebase must be used for persisted pause/history
+values. `MenuKey` events resolve numeric accelerators (1–5 by default), Enter for
+the initial default action, and Escape to cancel; native navigation can dispatch
+`MenuChoice` directly for the currently highlighted action.
 At identical timestamps, dispatch hotkeys before timers so the inclusive 400 ms
 double-press boundary is deterministic. Menu callbacks carry their menu ID;
 stale callbacks cannot execute a later menu's action.

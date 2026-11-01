@@ -220,6 +220,117 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires an isolated X11 display; replaces clipboard contents"]
+    fn retired_owner_drains_routed_requests_and_incr() {
+        for (len, stopped) in [
+            (4, false),
+            (4, true),
+            (CHUNK_BYTES * 3 + 12, false),
+            (CHUNK_BYTES * 3 + 12, true),
+        ] {
+            let payload = Payload {
+                plain: "x".repeat(len),
+                ..Default::default()
+            };
+            let mut owner = Owner::new(&payload, WriteMode::Plain).unwrap();
+            let reader = Inspector::new().unwrap();
+            let target = reader.atom(b"UTF8_STRING").unwrap();
+            reader
+                .conn
+                .convert_selection(
+                    reader.window,
+                    reader.selection,
+                    target,
+                    reader.property,
+                    CURRENT_TIME,
+                )
+                .unwrap();
+            // Round trip guarantees the conversion was routed to the original owner.
+            reader.owner().unwrap();
+            if len > CHUNK_BYTES {
+                // Start INCR before ownership changes, but leave its handshake pending.
+                loop {
+                    if let Event::SelectionRequest(request) = owner
+                        .x
+                        .event(Instant::now() + Duration::from_secs(3))
+                        .unwrap()
+                    {
+                        owner.request(request).unwrap();
+                        break;
+                    }
+                }
+            }
+            let replacement = Owner::new(&Payload::default(), WriteMode::Plain).unwrap();
+            // The small request is still queued; the large one is an active INCR.
+            let worker = thread::spawn(move || owner.run(&AtomicBool::new(stopped)));
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Event::SelectionNotify(event) = reader.event(deadline).unwrap() {
+                    assert_ne!(event.property, 0);
+                    break;
+                }
+            }
+            let reply = reader
+                .conn
+                .get_property(
+                    true,
+                    reader.window,
+                    reader.property,
+                    AtomEnum::ANY,
+                    0,
+                    u32::MAX,
+                )
+                .unwrap()
+                .reply()
+                .unwrap();
+            let mut bytes = Vec::new();
+            if reply.type_ == reader.incr {
+                reader.conn.flush().unwrap();
+                loop {
+                    if let Event::PropertyNotify(event) = reader.event(deadline).unwrap() {
+                        if event.atom != reader.property || event.state != Property::NEW_VALUE {
+                            continue;
+                        }
+                        let part = reader
+                            .conn
+                            .get_property(
+                                true,
+                                reader.window,
+                                reader.property,
+                                AtomEnum::ANY,
+                                0,
+                                u32::MAX,
+                            )
+                            .unwrap()
+                            .reply()
+                            .unwrap();
+                        reader.conn.flush().unwrap();
+                        if part.type_ == 0 || part.type_ == reader.incr {
+                            continue;
+                        }
+                        assert_eq!(part.type_, target);
+                        assert_eq!(part.format, 8);
+                        if part.value.is_empty() {
+                            break;
+                        }
+                        bytes.extend(part.value);
+                    }
+                }
+            } else {
+                bytes = reply.value;
+            }
+            assert_eq!(bytes, payload.plain.as_bytes());
+            worker.join().unwrap();
+            drop(replacement);
+        }
+    }
+}
+
 // A connection and its event loop belong to exactly one thread. Dropping the
 // handle stops that loop and closes the connection (releasing the selection).
 pub struct NativeClipboard {
@@ -566,10 +677,23 @@ impl Owner {
         Ok(())
     }
     fn run(mut self, stop: &AtomicBool) {
-        while !stop.load(Ordering::Acquire) {
+        let mut retiring = None;
+        loop {
+            if stop.load(Ordering::Acquire) && retiring.is_none() {
+                // Synchronize with the server before draining: requests already routed
+                // to this owner may still be in flight when its replacement is ready.
+                if self.x.owner().is_err() {
+                    break;
+                }
+                retiring = Some(Instant::now());
+            }
+            if retiring.is_some_and(|since: Instant| since.elapsed() >= Duration::from_secs(3)) {
+                break;
+            }
             match self.x.conn.poll_for_event() {
                 Ok(Some(Event::SelectionClear(event))) if event.selection == self.x.selection => {
-                    break;
+                    // Previously accepted INCR transfers still belong to this connection.
+                    retiring.get_or_insert_with(Instant::now);
                 }
                 Ok(Some(Event::SelectionRequest(event))) => {
                     // A disappearing requestor must not take down the clipboard owner.
@@ -581,6 +705,7 @@ impl Owner {
                     }
                 }
                 Ok(Some(_)) => {}
+                Ok(None) if retiring.is_some() && self.transfers.is_empty() => break,
                 Ok(None) => thread::sleep(Duration::from_millis(2)),
                 Err(_) => break,
             }

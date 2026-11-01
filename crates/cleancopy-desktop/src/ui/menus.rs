@@ -695,7 +695,7 @@ fn row(
     }
     response
 }
-fn format_label(format: Format) -> (&'static str, &'static str) {
+pub(crate) fn format_label(format: Format) -> (&'static str, &'static str) {
     match format {
         Format::ChineseNumbered => ("¶", "纯文本 · 中文序号"),
         Format::WordRichText => ("W", "Word / WPS 富文本"),

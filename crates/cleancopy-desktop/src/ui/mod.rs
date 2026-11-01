@@ -116,7 +116,9 @@ impl DesktopApp {
             epoch,
             source_chars: source.chars().count(),
         };
-        app.sync_pause(epoch);
+        if view != View::Settings {
+            app.sync_pause(epoch);
+        }
         if matches!(view, View::Menu | View::MenuSecondary) {
             app.open_menu();
         }
@@ -190,7 +192,9 @@ impl eframe::App for DesktopApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let now = self.now();
         self.engine.platform_mut().now = now;
-        self.sync_pause(now);
+        if self.view != View::Settings {
+            self.sync_pause(now);
+        }
         if let Some(until) = self.engine.config().paused_until {
             ctx.request_repaint_after(std::time::Duration::from_millis(until.saturating_sub(now)));
         }
@@ -204,10 +208,25 @@ impl eframe::App for DesktopApp {
         }
         match self.view {
             View::Settings => {
-                let mut config = self.engine.config().clone();
+                // Refresh before editing so history and tray changes are not written
+                // back from a stale settings-window snapshot.
+                if let Some(path) = &self.save_path {
+                    match Config::load(path) {
+                        Ok(config) => self.engine.update_config(config).unwrap(),
+                        Err(error) => self.error = Some(error.to_string()),
+                    }
+                    ctx.request_repaint_after(std::time::Duration::from_millis(250));
+                }
+                let previous = self.engine.config().clone();
+                let mut config = previous.clone();
                 if self.settings.show(ctx, &mut config) {
+                    if let Some(path) = &self.save_path {
+                        match config.save_changes(path, &previous) {
+                            Ok(merged) => config = merged,
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
+                    }
                     self.engine.update_config(config).unwrap();
-                    self.save();
                 }
             }
             View::Menu | View::MenuSecondary => {

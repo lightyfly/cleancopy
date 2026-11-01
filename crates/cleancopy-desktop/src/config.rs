@@ -239,6 +239,46 @@ impl Config {
         Ok(())
     }
 
+    /// Merge only fields edited since `previous`, preserving changes made by the
+    /// daemon or another settings window. All desktop writers share this lock.
+    pub fn save_changes(&self, path: &Path, previous: &Self) -> Result<Self, ConfigError> {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(ConfigError::Io)?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path.with_extension("toml.lock"))
+            .map_err(ConfigError::Io)?;
+        lock.lock().map_err(ConfigError::Io)?;
+        let mut merged = Self::load(path)?;
+        let original = toml::to_string(&merged).map_err(ConfigError::Encode)?;
+        macro_rules! merge {
+            ($($field:ident),+ $(,)?) => { $(
+                if self.$field != previous.$field {
+                    merged.$field = self.$field.clone();
+                }
+            )+ };
+        }
+        merge!(
+            silent_mode,
+            numbering_style,
+            app_rules,
+            fallback,
+            secondary_items,
+            hotkey,
+            paused_until,
+            recent_pastes
+        );
+        if toml::to_string(&merged).map_err(ConfigError::Encode)? != original {
+            merged.save(path)?;
+        }
+        Ok(merged)
+    }
+
     fn normalize_history(&mut self) {
         self.recent_pastes
             .sort_by_key(|paste| std::cmp::Reverse(paste.timestamp));

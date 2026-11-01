@@ -278,6 +278,8 @@ fn app(class: &str, dir: &Path) -> Result<()> {
         .append(true)
         .open(dir.join("events.tsv"))?;
     let mut count = 0;
+    let mut document = Vec::new();
+    let mut history = Vec::new();
     let mut status = "Waiting for native Ctrl+V".to_owned();
     loop {
         match conn.wait_for_event()? {
@@ -306,6 +308,9 @@ fn app(class: &str, dir: &Path) -> Result<()> {
                     writeln!(events, "{started}\tpaste-key")?;
                     events.flush()?;
                     let reply = read(&conn, window, atom(&conn, target_name)?)?;
+                    history.push(document.clone());
+                    document.extend_from_slice(&reply.value);
+                    fs::write(dir.join("document.bin"), &document)?;
                     count += 1;
                     fs::write(dir.join(format!("paste-{count}.bin")), &reply.value)?;
                     writeln!(
@@ -317,6 +322,8 @@ fn app(class: &str, dir: &Path) -> Result<()> {
                     status = format!("Paste {count}: {} bytes ({target_name})", reply.value.len());
                     conn.clear_area(true, window, 0, 96, 900, 60)?;
                 } else if sym == u32::from(b'z') || sym == u32::from(b'Z') {
+                    document = history.pop().unwrap_or_default();
+                    fs::write(dir.join("document.bin"), &document)?;
                     writeln!(events, "{}\tundo", millis())?;
                 }
                 events.flush()?;

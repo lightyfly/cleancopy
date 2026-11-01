@@ -22,6 +22,7 @@ tempfile = "3"
 cleancopy-clipboard = { path = "../cleancopy-clipboard" }
 x11rb = { version = "0.13", features = ["xtest"] }
 raw-window-handle = "0.6"
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 
 [dev-dependencies]
 x11rb = "0.13"

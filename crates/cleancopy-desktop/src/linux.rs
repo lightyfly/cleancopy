@@ -1,4 +1,4 @@
-//! Opt-in X11 platform and event driver. No daemon is installed by this module.
+//! X11 platform, event driver, and background desktop menu host.
 use crate::{
     config::{AppIdentity, Config},
     engine::{Engine, Event, MenuKey, MenuModel, Platform, Snapshot, TEXT_PLAIN},
@@ -558,9 +558,126 @@ fn decode_snapshot(snapshot: &Snapshot) -> Result<NativeSnapshot> {
     Ok(NativeSnapshot { targets })
 }
 
-/// Run the opt-in native menu host on the main thread. No settings/tray/default-daemon change.
+/// D-Bus callbacks only enqueue actions; X11 and engine work stay on the UI thread.
+struct NativeTray {
+    sender: std::sync::mpsc::Sender<crate::ui::menus::TrayAction>,
+    config: Config,
+    enabled: bool,
+}
+impl NativeTray {
+    fn send(&self, action: crate::ui::menus::TrayAction) {
+        let _ = self.sender.send(action);
+    }
+}
+impl ksni::Tray for NativeTray {
+    const MENU_ON_ACTIVATE: bool = true;
+    fn id(&self) -> String {
+        "cleancopy".into()
+    }
+    fn title(&self) -> String {
+        "CleanCopy".into()
+    }
+    fn icon_name(&self) -> String {
+        "edit-paste".into()
+    }
+    fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
+        eprintln!("CleanCopy tray: no StatusNotifier host ({reason:?}); daemon continues");
+        true
+    }
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use crate::ui::menus::TrayAction;
+        use ksni::menu::{CheckmarkItem, StandardItem};
+        let mut items = vec![
+            CheckmarkItem {
+                label: if self.enabled {
+                    "CleanCopy 运行中"
+                } else {
+                    "CleanCopy 已暂停"
+                }
+                .into(),
+                checked: self.enabled,
+                activate: Box::new(|tray: &mut Self| {
+                    tray.send(TrayAction::SetEnabled(!tray.enabled))
+                }),
+                ..Default::default()
+            }
+            .into(),
+            ksni::MenuItem::Separator,
+        ];
+        items.push(
+            StandardItem {
+                label: "最近粘贴".into(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+        );
+        if self.config.recent_pastes.is_empty() {
+            items.push(
+                StandardItem {
+                    label: "暂无粘贴记录".into(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        for recent in self.config.recent_pastes.iter().take(2) {
+            let label = recent
+                .format
+                .map(|format| crate::ui::menus::format_label(format).1)
+                .unwrap_or("原文");
+            items.push(
+                StandardItem {
+                    label: format!("{} → {label}", recent.app.name),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        items.push(ksni::MenuItem::Separator);
+        for (label, action) in [
+            ("唤出粘贴菜单", TrayAction::ShowMenu),
+            ("撤销上次转换", TrayAction::Undo),
+            ("暂停 1 小时", TrayAction::Pause),
+            ("设置…", TrayAction::Settings),
+            ("退出 CleanCopy", TrayAction::Quit),
+        ] {
+            items.push(
+                StandardItem {
+                    label: label.into(),
+                    activate: Box::new(move |tray: &mut Self| tray.send(action)),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        items
+    }
+}
+
+/// Run the background helper and nonactivating native menu on the main thread.
 pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
     use eframe::egui;
+    use ksni::blocking::TrayMethods;
+    let enabled = config.paused_until.is_none_or(|until| until <= unix_ms());
+    let (sender, actions) = std::sync::mpsc::channel();
+    let tray = match (NativeTray {
+        sender,
+        config: config.clone(),
+        enabled,
+    })
+    .assume_sni_available(true)
+    .spawn()
+    {
+        Ok(handle) => Some(handle),
+        Err(error) => {
+            eprintln!("CleanCopy tray unavailable: {error}; daemon continues");
+            None
+        }
+    };
+    let saved = config.clone();
     let driver = LinuxDriver::new(config)?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -606,12 +723,18 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
             .check()?;
             Ok(Box::new(LinuxApp {
                 driver,
+                tray,
+                actions,
+                enabled,
+                settings_child: None,
+                quitting: false,
                 menu: Default::default(),
                 save_path,
                 shown: None,
                 window,
-                saved: String::new(),
+                saved,
                 frames: 0,
+                last_sync: Instant::now(),
             }))
         }),
     )
@@ -619,18 +742,100 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
 }
 struct LinuxApp {
     driver: LinuxDriver,
+    tray: Option<ksni::blocking::Handle<NativeTray>>,
+    actions: std::sync::mpsc::Receiver<crate::ui::menus::TrayAction>,
+    enabled: bool,
+    settings_child: Option<std::process::Child>,
+    quitting: bool,
     menu: crate::ui::menus::MenuState,
     save_path: Option<PathBuf>,
     shown: Option<u64>,
     window: Window,
-    saved: String,
+    saved: Config,
     frames: u8,
+    last_sync: Instant,
+}
+impl LinuxApp {
+    fn tray_action(&mut self, action: crate::ui::menus::TrayAction) -> Result<()> {
+        use crate::ui::menus::TrayAction;
+        let t = self.driver.engine.platform().now();
+        match action {
+            TrayAction::ShowMenu => {
+                self.driver.dispatch(Event::Resume { t })?;
+                self.enabled = true;
+                self.driver.dispatch(Event::Cancel { t })?;
+                self.driver.dispatch(Event::HotkeyPressed { t })?;
+                self.driver.dispatch(Event::HotkeyPressed { t })?;
+            }
+            TrayAction::Undo => self.driver.dispatch(Event::Undo { t })?,
+            TrayAction::SetEnabled(enabled) => {
+                self.driver.dispatch(if enabled {
+                    Event::Resume { t }
+                } else {
+                    Event::Pause { t, until: None }
+                })?;
+                self.enabled = enabled;
+            }
+            TrayAction::Pause => {
+                self.driver.dispatch(Event::Pause {
+                    t,
+                    until: Some(t.saturating_add(3_600_000)),
+                })?;
+                self.enabled = false;
+            }
+            TrayAction::Settings => {
+                if let Some(child) = &mut self.settings_child {
+                    if child.try_wait().map_err(err)?.is_none() {
+                        return Ok(());
+                    }
+                }
+                let mut command = std::process::Command::new(std::env::current_exe().map_err(err)?);
+                command.arg("--settings");
+                if let Some(path) = &self.save_path {
+                    command.arg("--config").arg(path);
+                }
+                self.settings_child = Some(command.spawn().map_err(err)?);
+            }
+            TrayAction::Quit => {
+                self.driver.dispatch(Event::Cancel { t })?;
+                // Service pending clipboard restoration before exiting.
+                self.quitting = true;
+            }
+        }
+        Ok(())
+    }
+}
+impl Drop for LinuxApp {
+    fn drop(&mut self) {
+        if let Some(tray) = &self.tray {
+            let _ = tray.shutdown();
+        }
+    }
 }
 impl eframe::App for LinuxApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _: &mut eframe::Frame) {
         use eframe::egui;
         if let Err(error) = self.driver.poll() {
             eprintln!("CleanCopy: {error}");
+        }
+        while let Ok(action) = self.actions.try_recv() {
+            if !self.quitting {
+                if let Err(error) = self.tray_action(action) {
+                    eprintln!("CleanCopy tray: {error}");
+                }
+            }
+        }
+        if self
+            .driver
+            .engine
+            .config()
+            .paused_until
+            .is_some_and(|until| until <= self.driver.engine.platform().now())
+        {
+            let t = self.driver.engine.platform().now();
+            if self.driver.dispatch(Event::Resume { t }).is_ok() {
+                self.enabled = true;
+            }
         }
         let model = self.driver.engine.platform().menu.clone();
         let id = model.as_ref().map(|m| m.id);
@@ -675,14 +880,47 @@ impl eframe::App for LinuxApp {
                 }
             }
         }
-        if let Some(path) = &self.save_path {
-            if let Ok(serialized) = toml::to_string(self.driver.engine.config()) {
-                if serialized != self.saved {
-                    match self.driver.engine.config().save(path) {
-                        Ok(()) => self.saved = serialized,
-                        Err(error) => eprintln!("CleanCopy config: {error}"),
+        let config_dirty =
+            toml::to_string(self.driver.engine.config()).ok() != toml::to_string(&self.saved).ok();
+        if config_dirty || self.last_sync.elapsed() >= std::time::Duration::from_millis(250) {
+            self.last_sync = Instant::now();
+            if let Some(path) = &self.save_path {
+                // Merge daemon-owned changes with the latest settings under the same
+                // file lock used by the settings process; never overwrite its edits.
+                match self.driver.engine.config().save_changes(path, &self.saved) {
+                    Ok(config) => {
+                        let changed = toml::to_string(&config).ok()
+                            != toml::to_string(self.driver.engine.config()).ok();
+                        if !changed || self.driver.engine.update_config(config.clone()).is_ok() {
+                            self.saved = config;
+                        }
                     }
+                    Err(error) => eprintln!("CleanCopy config: {error}"),
                 }
+            }
+            if let Some(tray) = &self.tray {
+                let config = self.driver.engine.config();
+                let enabled = self.enabled
+                    && config
+                        .paused_until
+                        .is_none_or(|until| until <= self.driver.engine.platform().now());
+                // ksni only publishes changed properties; avoid queueing updates every frame.
+                let _ = tray.update(|state| {
+                    if state.enabled != enabled
+                        || toml::to_string(&state.config).ok() != toml::to_string(config).ok()
+                    {
+                        state.enabled = enabled;
+                        state.config = config.clone();
+                    }
+                });
+            }
+        }
+        if self.quitting && self.driver.engine.next_deadline().is_none() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if let Some(child) = &mut self.settings_child {
+            if child.try_wait().ok().flatten().is_some() {
+                self.settings_child = None;
             }
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(8));

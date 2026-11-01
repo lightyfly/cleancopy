@@ -1,18 +1,19 @@
-# CleanCopy desktop — Stage B
+# CleanCopy desktop — Stage C
 
 This crate supplies the headless paste engine and the `cleancopy-app` desktop UI.
-Stage B uses eframe/egui with the Glow renderer and X11 window backend on Linux.
-It deliberately does **not** register global hotkeys or an OS tray icon, discover
-native foreground applications, inject paste/undo input, or manipulate the system
-clipboard through the paste engine. UI actions use an in-memory demo platform;
-the settings editor may use the normal text-editor clipboard. Existing CLI
-behavior is unchanged.
+On Linux, the default launch runs the X11 global-hotkey daemon, native clipboard
+adapter, nonactivating egui menu, and pure-Rust `ksni` StatusNotifier tray. A missing
+tray host or session bus is logged without disabling the hotkey. No GTK is needed.
+Windows/macOS native desktop adapters are not implemented; those platforms retain
+the settings and preview UI. Existing CLI behavior is unchanged.
 
 ## Run the UI
 
 ```sh
 cargo run -p cleancopy-desktop --bin cleancopy-app
-# Isolated persistent settings file:
+# Open settings with an isolated persistent file:
+cargo run -p cleancopy-desktop --bin cleancopy-app -- --settings --config /tmp/cleancopy.toml
+# Run the Linux daemon using that file:
 cargo run -p cleancopy-desktop --bin cleancopy-app -- --config /tmp/cleancopy.toml
 # Session-only demo data (also ignores --config):
 cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview menu
@@ -21,11 +22,12 @@ cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview settings
 cargo run -p cleancopy-desktop --bin cleancopy-app -- --preview tray
 ```
 
-Normal settings edits save immediately with atomic replacement; errors appear in
-an error window with a retry button. Previews never load or save user settings.
-Silent mode defaults **on**, superseding the older design mockup. Menus support
-arrow navigation, Enter, Escape and numeric accelerators; paste/undo effects are
-simulated. Tray preview contains tray-menu content, not tray registration.
+Normal settings edits save immediately with atomic replacement and field-level
+merging with daemon updates; errors appear in an error window with a retry button.
+Previews never load or save user settings. Silent mode defaults **on**. Preview
+paste/undo effects are simulated; the default Linux daemon performs real actions.
+The tray preview displays menu content without registering a second tray item.
+Native Ctrl+Shift+V currently remains fixed even if the saved hotkey label changes.
 
 CJK fonts are loaded at runtime, preferring Noto Sans CJK under
 `/usr/share/fonts`, with fallback discovery under that directory and
@@ -98,8 +100,9 @@ Default rules include TextEdit/notepad/gedit → numbered plain text, Word/WPS �
 Word rich text, and Notion/Obsidian → unchanged Markdown. Matching uses exact,
 ASCII-case-insensitive bundle ID, executable basename, or X11 WM_CLASS. Bundle
 IDs outrank executable names, which outrank WM_CLASS. Menu changes and remembered
-rules mutate configuration in memory; the Stage B application driver persists
-changes using `Config::save` and surfaces save failures.
+rules mutate configuration in memory; the native driver persists changes using
+`Config::save_changes`, merging fields edited since its last saved snapshot with
+external settings changes under a shared file lock.
 
 ## Renderers
 
@@ -159,14 +162,23 @@ real clipboard, or retry input injection.
 
 ## Scope and remaining native work
 
-The supplied `docs/desktop/*.html` and `base.css` are the visual references for
-the Stage B GUI. Native accessibility permissions, focus/caret discovery,
-clipboard ownership lifetimes, HTML-only clipboard import, mixed-image
-placeholders, background conversion/progress UI, and native hotkey conflict
-checks remain later-stage work requiring platform drivers.
+The supplied `docs/desktop/*.html` and `base.css` are the visual references.
+Linux supports WM_CLASS/foreground discovery, lossless native clipboard snapshots,
+XTEST paste/undo, passive-hotkey conflict reporting, and pointer-positioned menus.
+Native Wayland, Windows/macOS desktop adapters, caret positioning, native Word/WPS
+acceptance, HTML-only import, mixed-image placeholders, and background conversion
+UI remain outside this stage.
 
-Tests use a mock platform and explicit timestamps; they do not mutate the real
-system clipboard. Run workspace checks from the repository root:
+Ordinary engine tests use a mock platform and explicit timestamps. The ignored
+Linux integration tests own an isolated Xvfb server and real native clipboard
+peers. Run the stage-C end-to-end matrix (requires Xvfb, xfwm4, xdotool):
+
+```sh
+scripts/e2e-desktop.sh
+```
+
+See `docs/desktop-verification.md` for runtime evidence and screenshots. Run
+workspace checks from the repository root:
 
 ```sh
 cargo build

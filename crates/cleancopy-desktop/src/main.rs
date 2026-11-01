@@ -6,17 +6,29 @@ use cleancopy_desktop::{
 use eframe::egui;
 
 #[derive(Parser)]
-#[command(about = "CleanCopy stage B UI (no native hotkey, clipboard, or tray integration)")]
+#[command(about = "CleanCopy desktop clipboard helper")]
 struct Args {
     /// Standalone demo data; edits are session-only and never touch user config.
     #[arg(long, value_enum)]
     preview: Option<View>,
-    /// Override the settings file for the normal settings window.
+    /// Open settings instead of running the Linux background helper.
+    #[arg(long, conflicts_with = "preview")]
+    settings: bool,
+    /// Override the settings file for the daemon or settings window.
     #[arg(long)]
     config: Option<std::path::PathBuf>,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    // Select X11 explicitly; Wayland support is not compiled in.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    #[cfg(target_os = "linux")]
+    if args.preview.is_none() && !args.settings {
+        let path = args.config.map(Ok).unwrap_or_else(config_path)?;
+        cleancopy_desktop::linux::run(Config::load(&path)?, Some(path))?;
+        return Ok(());
+    }
     let view = args.preview.unwrap_or(View::Settings);
     let (config, path) = if args.preview.is_some() {
         (demo_config(), None)
@@ -29,9 +41,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         View::Menu | View::MenuSecondary => egui::vec2(960.0, 600.0),
         View::Tray => egui::vec2(720.0, 520.0),
     };
-    // Select X11 explicitly on Unix; Wayland support is not compiled in.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    std::env::set_var("WINIT_UNIX_BACKEND", "x11");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(size)

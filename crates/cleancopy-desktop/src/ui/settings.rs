@@ -141,13 +141,7 @@ impl SettingsState {
                         row(ui, 38.0, |ui| {
                             badge(ui, &name);
                             let label = display_name(&name);
-                            if ui
-                                .add_sized(
-                                    [147.0, 24.0],
-                                    egui::Button::new(RichText::new(label).size(12.0))
-                                        .selected(self.selected_app == name)
-                                        .frame(false),
-                                )
+                            if app_name(ui, label, self.selected_app == name)
                                 .on_hover_text(format!(
                                     "{} · {} 个匹配标识{}",
                                     name,
@@ -173,10 +167,7 @@ impl SettingsState {
                 });
             row(ui, 38.0, |ui| {
                 badge(ui, "?");
-                if ui
-                    .add_sized([147.0, 24.0], egui::Button::new("其他 App").frame(false))
-                    .clicked()
-                {
+                if app_name(ui, "其他 App", self.selected_app == "其他 App").clicked() {
                     self.selected_app = "其他 App".into();
                     if let Fallback::Fixed(format) = config.fallback {
                         self.preview = format;
@@ -259,6 +250,7 @@ impl SettingsState {
                     ui.add_sized(
                         [150.0, 22.0],
                         egui::Label::new(RichText::new(format_name(item.format)).size(12.0))
+                            .halign(egui::Align::Min)
                             .truncate(),
                     );
                     if item.enabled {
@@ -578,6 +570,25 @@ fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
             contents(ui);
         });
 }
+fn app_name(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(147.0, 24.0), egui::Sense::click());
+    let visuals = ui.style().interact_selectable(&response, selected);
+    if selected || response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
+    }
+    ui.painter().with_clip_rect(rect).text(
+        rect.left_center() + Vec2::new(4.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        visuals.text_color(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
+    });
+    response
+}
+
 fn row(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui)) {
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), height),

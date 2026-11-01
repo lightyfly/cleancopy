@@ -390,10 +390,12 @@ name = "cleancopy-desktop"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "cleancopy-clipboard",
  "cleancopy-core",
  "dirs",
  "eframe",
  "png 0.17.16",
+ "raw-window-handle",
  "serde",
  "tempfile",
  "toml",

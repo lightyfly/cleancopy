@@ -48,7 +48,7 @@ pub trait ClipboardWriter {
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{run_holder, spawn_holder, NativeClipboard};
+pub use linux::{run_holder, spawn_holder, NativeClipboard, NativeSnapshot, NativeTarget};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

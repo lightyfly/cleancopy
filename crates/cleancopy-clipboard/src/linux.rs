@@ -27,6 +27,199 @@ use x11rb::{
     COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
 };
 
+/// Lossless X11 clipboard data. Protocol targets are regenerated, not replayed.
+/// Targets are sorted by their raw atom names when captured. No text aliases are added.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct NativeSnapshot {
+    pub targets: Vec<NativeTarget>,
+}
+
+/// One target's property, including its native type and element width.
+/// Atom names need not be UTF-8. For formats 16/32, `data` uses host byte order
+/// (as returned by x11rb); snapshots are intended for restoration on this host
+/// and X server (embedded atom/window IDs are not translated).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeTarget {
+    pub target: Vec<u8>,
+    pub type_name: Vec<u8>,
+    pub format: u8,
+    pub data: Vec<u8>,
+}
+
+fn protocol_target(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"TARGETS"
+            | b"MULTIPLE"
+            | b"SAVE_TARGETS"
+            | b"DELETE"
+            | b"INSERT_SELECTION"
+            | b"INSERT_PROPERTY"
+            | b"TIMESTAMP"
+    )
+}
+
+fn validate_target(target: &NativeTarget) -> Result<()> {
+    if target.target.is_empty()
+        || target.type_name.is_empty()
+        || target.target.len() > usize::from(u16::MAX)
+        || target.type_name.len() > usize::from(u16::MAX)
+        || protocol_target(&target.target)
+        || target.type_name == b"INCR"
+        || !matches!(target.format, 8 | 16 | 32)
+        || !target
+            .data
+            .len()
+            .is_multiple_of(usize::from(target.format / 8))
+    {
+        return Err(error("invalid native X11 snapshot target"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(format: u8, data: Vec<u8>) -> NativeTarget {
+        NativeTarget {
+            target: b"application/x-test".to_vec(),
+            type_name: b"CUSTOM_TYPE".to_vec(),
+            format,
+            data,
+        }
+    }
+
+    #[test]
+    fn validates_native_targets_without_a_display() {
+        for (format, width) in [(8, 1), (16, 2), (32, 4)] {
+            assert!(validate_target(&target(format, vec![])).is_ok());
+            assert!(validate_target(&target(format, vec![0; width])).is_ok());
+            if width > 1 {
+                assert!(validate_target(&target(format, vec![0; width - 1])).is_err());
+            }
+        }
+        for format in [0, 1, 7, 24, 64] {
+            assert!(validate_target(&target(format, vec![])).is_err());
+        }
+        for name in [
+            b"TARGETS".as_slice(),
+            b"MULTIPLE",
+            b"TIMESTAMP",
+            b"DELETE",
+            b"SAVE_TARGETS",
+            b"INSERT_SELECTION",
+            b"INSERT_PROPERTY",
+            b"",
+        ] {
+            let mut item = target(8, vec![]);
+            item.target = name.to_vec();
+            assert!(validate_target(&item).is_err());
+        }
+        let mut item = target(8, vec![0, 255]);
+        item.target = vec![255, 128];
+        item.type_name = vec![254];
+        assert!(validate_target(&item).is_ok());
+        for name in [b"INCR".as_slice(), b""] {
+            item.type_name = name.to_vec();
+            assert!(validate_target(&item).is_err());
+        }
+        let duplicate = target(8, vec![]);
+        assert!(Owner::from_snapshot(&NativeSnapshot {
+            targets: vec![duplicate.clone(), duplicate]
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_missing_partial_or_misaligned_properties() {
+        use x11rb::protocol::xproto::GetPropertyReply;
+        for (type_, format, bytes_after, value) in [
+            (0, 8, 0, vec![]),
+            (1, 0, 0, vec![]),
+            (1, 16, 0, vec![0]),
+            (1, 32, 0, vec![0; 3]),
+            (1, 8, 4, vec![0]),
+        ] {
+            assert!(property_data(GetPropertyReply {
+                type_,
+                format,
+                bytes_after,
+                value,
+                ..Default::default()
+            })
+            .is_err());
+        }
+        for format in [8, 16, 32] {
+            let result = property_data(GetPropertyReply {
+                type_: 1,
+                format,
+                value: vec![0; 4],
+                ..Default::default()
+            })
+            .unwrap();
+            assert_eq!(result.type_, 1);
+            assert_eq!(result.format, format);
+            assert_eq!(&*result.data, &[0; 4]);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an isolated X11 display; replaces clipboard contents"]
+    fn snapshot_roundtrip_raw_targets_and_incr() {
+        let clipboard = NativeClipboard::new().unwrap();
+        assert_eq!(
+            clipboard.read_snapshot().unwrap(),
+            NativeSnapshot::default()
+        );
+        let mut snapshot = NativeSnapshot {
+            targets: vec![
+                target(8, vec![0, 255, 128]),
+                NativeTarget {
+                    target: vec![255, 128],
+                    type_name: vec![254, 127],
+                    format: 8,
+                    data: vec![],
+                },
+            ],
+        };
+        for format in [8, 16, 32] {
+            for len in [4, CHUNK_BYTES, CHUNK_BYTES + 4, CHUNK_BYTES * 2 + 12] {
+                snapshot.targets.push(NativeTarget {
+                    target: format!("application/x-raw-{format}-{len}").into_bytes(),
+                    type_name: format!("TYPE_{format}").into_bytes(),
+                    format,
+                    data: (0..len).map(|i| (i % 251) as u8).collect(),
+                });
+            }
+        }
+        snapshot.targets.sort_by(|a, b| a.target.cmp(&b.target));
+        clipboard.write_snapshot(&snapshot).unwrap();
+        assert_eq!(clipboard.read_snapshot().unwrap(), snapshot);
+        let mut invalid = snapshot.clone();
+        invalid.targets.push(target(0, vec![]));
+        assert!(clipboard.write_snapshot(&invalid).is_err());
+        assert_eq!(clipboard.read_snapshot().unwrap(), snapshot);
+        let replacement = NativeClipboard::new().unwrap();
+        replacement
+            .write_mode(&Payload::default(), WriteMode::Plain)
+            .unwrap();
+        drop(clipboard);
+        replacement.write_snapshot(&snapshot).unwrap();
+        assert_eq!(replacement.read_snapshot().unwrap(), snapshot);
+        replacement
+            .write_snapshot(&NativeSnapshot::default())
+            .unwrap();
+        assert_eq!(
+            replacement.read_snapshot().unwrap(),
+            NativeSnapshot::default()
+        );
+        let reader = NativeClipboard::new().unwrap();
+        drop(replacement);
+        assert_eq!(reader.read_snapshot().unwrap(), NativeSnapshot::default());
+    }
+}
+
 // A connection and its event loop belong to exactly one thread. Dropping the
 // handle stops that loop and closes the connection (releasing the selection).
 pub struct NativeClipboard {
@@ -53,7 +246,60 @@ impl NativeClipboard {
         })
     }
     pub fn write_mode(&self, payload: &Payload, mode: WriteMode) -> Result<()> {
-        let owner = Owner::new(payload, mode)?;
+        self.start_owner(Owner::new(payload, mode)?)
+    }
+    /// Capture every advertised data target, or fail without returning a partial snapshot.
+    /// A missing selection owner is represented by an empty snapshot.
+    pub fn read_snapshot(&self) -> Result<NativeSnapshot> {
+        let reader = Inspector::new()?;
+        let owner = reader.owner()?;
+        if owner == 0 {
+            return Ok(NativeSnapshot::default());
+        }
+        let targets_atom = reader.atom(b"TARGETS")?;
+        let targets = reader.convert_property(targets_atom)?;
+        if targets.type_ != AtomEnum::ATOM.into() || targets.format != 32 {
+            return Err(error("malformed X11 TARGETS property: expected ATOM/32"));
+        }
+        let mut snapshot = NativeSnapshot::default();
+        let mut seen = std::collections::HashSet::new();
+        for bytes in targets.data.as_chunks::<4>().0 {
+            let atom = u32::from_ne_bytes(*bytes);
+            let name = reader.atom_name(atom)?;
+            if protocol_target(&name) || !seen.insert(atom) {
+                continue;
+            }
+            let property = reader.convert_property(atom).map_err(|cause| {
+                error(format!(
+                    "cannot snapshot X11 target {}: {cause}",
+                    String::from_utf8_lossy(&name)
+                ))
+            })?;
+            let target = NativeTarget {
+                target: name,
+                type_name: reader.atom_name(property.type_)?,
+                format: property.format,
+                data: property.data.to_vec(),
+            };
+            validate_target(&target)?;
+            snapshot.targets.push(target);
+            if reader.owner()? != owner {
+                return Err(error("X11 clipboard owner changed during snapshot"));
+            }
+        }
+        if reader.owner()? != owner {
+            return Err(error("X11 clipboard owner changed during snapshot"));
+        }
+        snapshot.targets.sort_by(|a, b| a.target.cmp(&b.target));
+        Ok(snapshot)
+    }
+    /// Restore exactly the captured data targets; does not synthesize text aliases.
+    /// An empty snapshot owns the selection with no data targets; it does not clear ownership.
+    /// Keep this handle alive while the restored clipboard must remain available.
+    pub fn write_snapshot(&self, snapshot: &NativeSnapshot) -> Result<()> {
+        self.start_owner(Owner::from_snapshot(snapshot)?)
+    }
+    fn start_owner(&self, owner: Owner) -> Result<()> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let thread = thread::Builder::new()
@@ -96,16 +342,38 @@ impl NativeClipboard {
 }
 
 const CHUNK_BYTES: usize = 64 * 1024;
-struct Transfer {
-    target: Atom,
+#[derive(Clone)]
+struct PropertyData {
+    type_: Atom,
+    format: u8,
     data: Arc<[u8]>,
+}
+impl PropertyData {
+    fn write(&self, x: &Inspector, window: Window, property: Atom, data: &[u8]) -> Result<()> {
+        x.conn
+            .change_property(
+                x11rb::protocol::xproto::PropMode::REPLACE,
+                window,
+                property,
+                self.type_,
+                self.format,
+                u32::try_from(data.len() / usize::from(self.format / 8)).map_err(error)?,
+                data,
+            )
+            .map_err(error)?
+            .check()
+            .map_err(error)
+    }
+}
+struct Transfer {
+    property: PropertyData,
     offset: usize,
     touched: Instant,
 }
 struct Owner {
     x: Inspector,
     targets: Atom,
-    data: HashMap<Atom, Arc<[u8]>>,
+    data: HashMap<Atom, PropertyData>,
     transfers: HashMap<(Window, Atom), Transfer>,
 }
 impl Owner {
@@ -136,6 +404,46 @@ impl Owner {
                 Arc::from(payload.markdown.as_bytes()),
             );
         }
+        let data = data
+            .into_iter()
+            .map(|(atom, data)| {
+                (
+                    atom,
+                    PropertyData {
+                        type_: atom,
+                        format: 8,
+                        data,
+                    },
+                )
+            })
+            .collect();
+        Self::claim(x, targets, data)
+    }
+    fn from_snapshot(snapshot: &NativeSnapshot) -> Result<Self> {
+        // Validate everything before taking ownership, including duplicate names.
+        let mut seen = std::collections::HashSet::new();
+        for target in &snapshot.targets {
+            validate_target(target)?;
+            if !seen.insert(&target.target) {
+                return Err(error("duplicate native X11 snapshot target"));
+            }
+        }
+        let x = Inspector::new()?;
+        let targets = x.atom(b"TARGETS")?;
+        let mut data = HashMap::new();
+        for target in &snapshot.targets {
+            data.insert(
+                x.atom(&target.target)?,
+                PropertyData {
+                    type_: x.atom(&target.type_name)?,
+                    format: target.format,
+                    data: Arc::from(target.data.as_slice()),
+                },
+            );
+        }
+        Self::claim(x, targets, data)
+    }
+    fn claim(x: Inspector, targets: Atom, data: HashMap<Atom, PropertyData>) -> Result<Self> {
         x.conn
             .set_selection_owner(x.window, x.selection, CURRENT_TIME)
             .map_err(error)?
@@ -180,19 +488,8 @@ impl Owner {
                     .map_err(error)?;
                 accepted = true;
             } else if let Some(data) = self.data.get(&request.target) {
-                if data.len() <= CHUNK_BYTES {
-                    self.x
-                        .conn
-                        .change_property8(
-                            x11rb::protocol::xproto::PropMode::REPLACE,
-                            request.requestor,
-                            property,
-                            request.target,
-                            data,
-                        )
-                        .map_err(error)?
-                        .check()
-                        .map_err(error)?;
+                if data.data.len() <= CHUNK_BYTES {
+                    data.write(&self.x, request.requestor, property, &data.data)?;
                 } else {
                     // Subscribe before announcing INCR so no delete acknowledgement is lost.
                     self.x
@@ -212,7 +509,7 @@ impl Owner {
                             request.requestor,
                             property,
                             self.x.incr,
-                            &[u32::try_from(data.len()).map_err(error)?],
+                            &[u32::try_from(data.data.len()).map_err(error)?],
                         )
                         .map_err(error)?
                         .check()
@@ -220,8 +517,7 @@ impl Owner {
                     self.transfers.insert(
                         (request.requestor, property),
                         Transfer {
-                            target: request.target,
-                            data: Arc::clone(data),
+                            property: data.clone(),
                             offset: 0,
                             touched: Instant::now(),
                         },
@@ -252,20 +548,14 @@ impl Owner {
     fn chunk(&mut self, window: Window, property: Atom) -> Result<()> {
         let key = (window, property);
         if let Some(transfer) = self.transfers.get_mut(&key) {
-            let end = (transfer.offset + CHUNK_BYTES).min(transfer.data.len());
-            self.x
-                .conn
-                .change_property8(
-                    x11rb::protocol::xproto::PropMode::REPLACE,
-                    window,
-                    property,
-                    transfer.target,
-                    &transfer.data[transfer.offset..end],
-                )
-                .map_err(error)?
-                .check()
-                .map_err(error)?;
-            let done = transfer.offset == transfer.data.len();
+            let end = (transfer.offset + CHUNK_BYTES).min(transfer.property.data.len());
+            transfer.property.write(
+                &self.x,
+                window,
+                property,
+                &transfer.property.data[transfer.offset..end],
+            )?;
+            let done = transfer.offset == transfer.property.data.len();
             transfer.offset = end;
             transfer.touched = Instant::now();
             if done {
@@ -375,7 +665,19 @@ impl Inspector {
             thread::sleep(Duration::from_millis(2));
         }
     }
+    fn atom_name(&self, atom: Atom) -> Result<Vec<u8>> {
+        Ok(self
+            .conn
+            .get_atom_name(atom)
+            .map_err(error)?
+            .reply()
+            .map_err(error)?
+            .name)
+    }
     fn convert(&self, target: Atom) -> Result<Vec<u8>> {
+        Ok(self.convert_property(target)?.data.to_vec())
+    }
+    fn convert_property(&self, target: Atom) -> Result<PropertyData> {
         self.conn
             .delete_property(self.window, self.property)
             .map_err(error)?;
@@ -392,9 +694,15 @@ impl Inspector {
         let mut deadline = Instant::now() + Duration::from_secs(3);
         loop {
             if let Event::SelectionNotify(event) = self.event(deadline)? {
-                if event.requestor == self.window && event.target == target {
+                if event.requestor == self.window
+                    && event.target == target
+                    && event.selection == self.selection
+                {
                     if event.property == 0 {
                         return Err(error("X11 owner refused clipboard target"));
+                    }
+                    if event.property != self.property {
+                        return Err(error("X11 owner returned an unexpected clipboard property"));
                     }
                     break;
                 }
@@ -407,9 +715,13 @@ impl Inspector {
             .reply()
             .map_err(error)?;
         if reply.type_ != self.incr {
-            return Ok(reply.value);
+            return property_data(reply);
+        }
+        if reply.format != 32 || reply.value.len() != 4 || reply.bytes_after != 0 {
+            return Err(error("malformed X11 INCR announcement"));
         }
         self.conn.flush().map_err(error)?;
+        let mut metadata = None;
         let mut bytes = Vec::new();
         loop {
             if let Event::PropertyNotify(event) = self.event(deadline)? {
@@ -428,15 +740,42 @@ impl Inspector {
                     if part.type_ == self.incr || part.type_ == 0 {
                         continue;
                     }
-                    if part.value.is_empty() {
-                        return Ok(bytes);
+                    let part = property_data(part)?;
+                    let current = (part.type_, part.format);
+                    if metadata.is_some_and(|previous| previous != current) {
+                        return Err(error("X11 INCR property type or format changed"));
                     }
-                    bytes.extend(part.value);
+                    metadata = Some(current);
+                    if part.data.is_empty() {
+                        return Ok(PropertyData {
+                            type_: part.type_,
+                            format: part.format,
+                            data: bytes.into(),
+                        });
+                    }
+                    bytes.extend_from_slice(&part.data);
                     deadline = Instant::now() + Duration::from_secs(3);
                 }
             }
         }
     }
+}
+fn property_data(reply: x11rb::protocol::xproto::GetPropertyReply) -> Result<PropertyData> {
+    if reply.type_ == 0
+        || !matches!(reply.format, 8 | 16 | 32)
+        || reply.bytes_after != 0
+        || !reply
+            .value
+            .len()
+            .is_multiple_of(usize::from(reply.format / 8))
+    {
+        return Err(error("malformed or incomplete X11 clipboard property"));
+    }
+    Ok(PropertyData {
+        type_: reply.type_,
+        format: reply.format,
+        data: reply.value.into(),
+    })
 }
 impl Drop for Inspector {
     fn drop(&mut self) {

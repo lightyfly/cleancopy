@@ -7,7 +7,8 @@ use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
 
 const ACCENT: Color32 = Color32::from_rgb(91, 91, 214);
 const LINE: Color32 = Color32::from_rgb(230, 230, 234);
-const MUTED: Color32 = Color32::from_rgb(145, 145, 153);
+const SUB: Color32 = Color32::from_rgb(110, 110, 115);
+const MUTED: Color32 = Color32::from_rgb(161, 161, 166);
 const TEXT: Color32 = Color32::from_rgb(29, 29, 31);
 const SAMPLE: &str = "# 项目周报\n## 本周进展\n- 完成 **剪贴板监听**\n- 接入 Word 富文本\n  - 标题映射 标题1/2\n  - 表格与代码块\n## 下周计划\n1. Windows 托盘\n2. 识别失败兜底";
 const FORMATS: [Format; 5] = [
@@ -297,7 +298,7 @@ impl SettingsState {
         let mut shortcut = 2;
         card(ui, |ui| {
             for (index, item) in config.secondary_items.iter_mut().enumerate() {
-                row(ui, 36.0, |ui| {
+                row(ui, 38.0, |ui| {
                     let grip = ui
                         .add(
                             egui::Label::new(RichText::new("⋮⋮").color(MUTED))
@@ -401,11 +402,8 @@ impl SettingsState {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         ui.label(RichText::new("实时预览").strong());
-        ui.label(
-            RichText::new(format!("· 当前：{}", display_name(&self.selected_app)))
-                .size(11.0)
-                .color(MUTED),
-        );
+        ui.label(RichText::new("·").color(MUTED));
+        ui.label(RichText::new(format!("当前：{}", display_name(&self.selected_app))).color(SUB));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             for (format, label) in [
                 (Format::Markdown, "Markdown"),
@@ -686,7 +684,7 @@ fn format_name(format: Format) -> &'static str {
         Format::ChineseNumbered => "纯文本 · 中文序号",
         Format::WordRichText => "Word / WPS 富文本",
         Format::Markdown => "Markdown 原样",
-        Format::PlainStripped => "纯文本 · 去除标记",
+        Format::PlainStripped => "纯文本 · 去符号",
         Format::HtmlSource => "HTML 源码",
     }
 }

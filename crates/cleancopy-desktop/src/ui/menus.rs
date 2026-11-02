@@ -298,17 +298,16 @@ impl MenuState {
                     );
                     for (index, item) in model.formats.iter().enumerate() {
                         let (icon, label) = format_label(item.format);
-                        let label = match item.note {
-                            Some(note) => format!("{label} · {note}"),
-                            None => label.to_owned(),
-                        };
-                        let response = row(
+                        // A note (e.g. 超过 2MB) replaces the shortcut hint,
+                        // right-aligned in grey; the label is elided first.
+                        let response = row_with_note(
                             ui,
                             row_rect(sub, 34.0 + index as f32 * ROW),
                             ("format", model.id, index),
                             icon,
-                            &label,
+                            label,
                             &item.shortcut.to_string(),
+                            item.note,
                             self.main == 1 && self.format == index,
                             item.enabled && !model.converting,
                             item.muted,
@@ -812,6 +811,50 @@ fn row(
     enabled: bool,
     muted: bool,
 ) -> egui::Response {
+    row_with_note(
+        ui, rect, id, icon, label, hint, None, selected, enabled, muted,
+    )
+}
+/// Longest prefix of `label` (plus "…") that fits `width` at `font`.
+fn elide(painter: &egui::Painter, label: &str, font: &FontId, width: f32) -> String {
+    let fits = |s: &str| {
+        painter
+            .layout_no_wrap(s.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+            <= width
+    };
+    if fits(label) {
+        return label.to_owned();
+    }
+    let chars: Vec<char> = label.chars().collect();
+    for end in (0..chars.len()).rev() {
+        let candidate: String = chars[..end]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+            + "…";
+        if fits(&candidate) {
+            return candidate;
+        }
+    }
+    String::new()
+}
+#[allow(clippy::too_many_arguments)]
+fn row_with_note(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    id: (&str, u64, usize),
+    icon: &str,
+    label: &str,
+    hint: &str,
+    note: Option<&str>,
+    selected: bool,
+    enabled: bool,
+    muted: bool,
+) -> egui::Response {
+    let hint = note.unwrap_or(hint);
     let response = ui.interact(
         rect,
         ui.id().with(id),
@@ -850,8 +893,20 @@ fn row(
         FontId::proportional(13.0),
         icon_color,
     );
-    let caps = key_caps(hint);
-    let hint_width = if !caps.is_empty() {
+    let caps = if note.is_some() {
+        Vec::new()
+    } else {
+        key_caps(hint)
+    };
+    let hint_font = FontId::proportional(11.0);
+    let hint_width = if note.is_some() {
+        // Measured, never clipped: the note must stay fully readable.
+        painter
+            .layout_no_wrap(hint.to_owned(), hint_font.clone(), MUTED)
+            .size()
+            .x
+            + 12.0
+    } else if !caps.is_empty() {
         paint_key_caps(
             &painter,
             rect.right() - 10.0,
@@ -871,11 +926,13 @@ fn row(
             rect.bottom(),
         ),
     );
+    let label_font = FontId::proportional(13.0);
+    let label = elide(&painter, label, &label_font, label_clip.width());
     painter.with_clip_rect(label_clip).text(
         rect.min + Vec2::new(36.0, 15.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(13.0),
+        label_font,
         color,
     );
     if !hint.is_empty() && caps.is_empty() {
@@ -883,7 +940,7 @@ fn row(
             rect.right_center() - Vec2::new(10.0, 0.0),
             Align2::RIGHT_CENTER,
             hint,
-            FontId::proportional(11.0),
+            hint_font,
             if highlighted { Color32::WHITE } else { MUTED },
         );
     }

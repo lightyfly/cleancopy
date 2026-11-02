@@ -166,7 +166,16 @@ impl OnboardingState {
         if self.step == 2 && ctx.memory(|m| m.has_focus(input_id)) {
             let mut hit = false;
             ctx.input_mut(|input| {
+                // egui-winit turns a Ctrl/⌘+Shift+V press into `Event::Paste`
+                // (and drops the key event), so treat a paste made with the
+                // hotkey's modifiers held as the hotkey too.
+                let paste_is_hotkey = recorded_hotkey(egui::Key::V, input.modifiers)
+                    .is_some_and(|h| same_hotkey(&h, &config.hotkey));
                 input.events.retain(|event| match event {
+                    egui::Event::Paste(_) if paste_is_hotkey => {
+                        hit = true;
+                        false
+                    }
                     egui::Event::Key {
                         key,
                         pressed: true,
@@ -442,12 +451,13 @@ fn step_usage(ui: &mut egui::Ui, config: &Config) {
         }
     });
     ui.add_space(6.0);
+    const KEY_SEP: &str = if cfg!(target_os = "macos") { "" } else { "+" };
     // The 首次使用 note lives here (removed from the settings page).
     ui.label(
         RichText::new(format!(
             "首次使用：复制后按 {} 智能粘贴；{} 直接打开完整格式菜单，托盘图标也可打开。",
-            hotkey_labels(&config.hotkey).join(""),
-            hotkey_labels(&config.full_menu_hotkey).join(""),
+            hotkey_labels(&config.hotkey).join(KEY_SEP),
+            hotkey_labels(&config.full_menu_hotkey).join(KEY_SEP),
         ))
         .size(12.0)
         .color(MUTED),
@@ -568,6 +578,41 @@ mod tests {
             Outcome::Finished
         } else {
             Outcome::Open
+        }
+    }
+
+    #[test]
+    fn hotkey_paste_formats_but_plain_paste_stays_raw() {
+        let config = Config::default();
+        for (modifiers, formatted) in [
+            (
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                true,
+            ),
+            (egui::Modifiers::CTRL | egui::Modifiers::COMMAND, false),
+        ] {
+            let ctx = egui::Context::default();
+            let mut state = OnboardingState {
+                step: 2,
+                ..Default::default()
+            };
+            let mut cfg = config.clone();
+            for events in [vec![], vec![egui::Event::Paste("# raw".into())]] {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
+                        modifiers,
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        ctx.memory_mut(|m| m.request_focus(egui::Id::new("onboarding_try_input")));
+                        state.show(ctx, &mut cfg);
+                    },
+                );
+            }
+            assert_eq!(state.tried, formatted, "{modifiers:?}");
+            assert_eq!(state.input.contains("# raw"), !formatted, "{}", state.input);
         }
     }
 

@@ -357,8 +357,14 @@ fn desktop_runtime_matrix() {
     let before = h.snapshot();
     let gedit = h.target("gedit");
     let config = h.dir.path().join("config.toml");
-    Config::default().save(&config).unwrap();
-    h.spawn(
+    // Onboarding is covered separately below; the matrix daemon is a returning user.
+    Config {
+        onboarding_done: true,
+        ..Config::default()
+    }
+    .save(&config)
+    .unwrap();
+    let daemon = h.spawn(
         Command::new(h.bin.join("cleancopy-app"))
             .env("DISPLAY", &h.display)
             .env("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -661,5 +667,96 @@ fn desktop_runtime_matrix() {
         h.children[child].wait().unwrap();
         println!("PASS {name} launch probe");
     }
+
+    // First run: a daemon with a fresh config spawns the onboarding window.
+    h.children[daemon].kill().unwrap();
+    h.children[daemon].wait().unwrap();
+    let fresh = h.dir.path().join("fresh.toml");
+    let first = h.spawn(
+        Command::new(h.bin.join("cleancopy-app"))
+            .env("DISPLAY", &h.display)
+            .env("LIBGL_ALWAYS_SOFTWARE", "1")
+            .arg("--config")
+            .arg(&fresh),
+        "first-run-daemon",
+    );
+    let mut window = 0;
+    wait("first-run onboarding window", || {
+        let out = Command::new("xdotool")
+            .env("DISPLAY", &h.display)
+            .args(["search", "--onlyvisible", "--name", "^CleanCopy$"])
+            .output()
+            .unwrap();
+        window = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .next()
+            .and_then(|l| l.parse().ok())
+            .unwrap_or(0);
+        window != 0
+    });
+    // Stop the daemon so its global grab doesn't take the step-3 hotkey; the
+    // onboarding window is its own process and stays open.
+    h.children[first].kill().unwrap();
+    h.children[first].wait().unwrap();
+    thread::sleep(Duration::from_millis(500));
+    let id = window.to_string();
+    let capture = |n: usize| {
+        let path = h.root.join(format!("docs/screenshots/onboarding-{n}.png"));
+        assert!(Command::new(h.bin.join("examples/screenshot"))
+            .env("DISPLAY", &h.display)
+            .arg(&path)
+            .arg(&id)
+            .status()
+            .unwrap()
+            .success());
+    };
+    let click = |x: &str, y: &str| {
+        h.xdo(&["mousemove", "--window", &id, x, y, "click", "1"]);
+        thread::sleep(Duration::from_millis(600));
+    };
+    capture(1);
+    click("420", "333"); // 下一步
+    capture(2);
+    click("420", "333");
+    click("320", "200"); // focus the try-it input
+                         // "Copy" the sample, then press the real hotkey inside the input.
+    let mut xclip = Command::new("xclip")
+        .env("DISPLAY", &h.display)
+        .args(["-selection", "clipboard"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        xclip
+            .stdin
+            .take()
+            .unwrap()
+            .write_all("# 项目周报\n## 本周进展\n".as_bytes())
+            .unwrap();
+    }
+    xclip.wait().unwrap();
+    h.xdo(&["windowfocus", "--sync", &id]);
+    // Hold the chord across frames like a person does; egui reports paste
+    // modifiers per frame, and an instant xdotool chord releases them first.
+    h.xdo(&["keydown", "ctrl+shift+v"]);
+    thread::sleep(Duration::from_millis(150));
+    h.xdo(&["keyup", "ctrl+shift+v"]);
+    thread::sleep(Duration::from_millis(600));
+    capture(3);
+    assert!(!Config::load(&fresh).unwrap().onboarding_done);
+    click("420", "333"); // 完成
+    wait("onboarding closed", || {
+        !Command::new("xdotool")
+            .env("DISPLAY", &h.display)
+            .args(["search", "--onlyvisible", "--name", "^CleanCopy$"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    });
+    assert!(Config::load(&fresh).unwrap().onboarding_done);
+    println!("PASS onboarding: first-run daemon spawned it; 3 steps captured; 完成 persisted onboarding_done");
     println!("PASS desktop runtime matrix: real target/debug/cleancopy-app --config; all native peers isolated");
 }

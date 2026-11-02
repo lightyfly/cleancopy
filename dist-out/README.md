@@ -42,3 +42,8 @@ limitations. No artifacts were published, pushed, tagged, or released.
 Built from commit 358232c2296f6979b24384b42d8b27a7a90a4080 with `dist build --artifacts=local --target x86_64-unknown-linux-gnu`.
 - cleancopy-cli-x86_64-unknown-linux-gnu.tar.xz: 608d5e3f36165997b37b9d08b75a913f43ea059db664fbb2a31fcf99aa72dcaa
 - cleancopy-desktop-x86_64-unknown-linux-gnu.tar.xz: 116fe9176ca08f8f17016af3952d6f739a13c764b2ebbb49b7306d567f0a2758
+
+## Rebuild 2026-11-02 11:03 (UTC+8)
+Built from commit e4c6af4ebc4d712d408fd7c97a293d611a1c4b8a with `dist build --artifacts=local --target x86_64-unknown-linux-gnu`.
+- cleancopy-cli-x86_64-unknown-linux-gnu.tar.xz: d8e23e1badc37f261ecfa35cb86e786cf29d6f1921f0ed8ee90b21473b257bd1
+- cleancopy-desktop-x86_64-unknown-linux-gnu.tar.xz: 7b7a1d696c142e59af169ba73015f5355ab57db54949a91587c7d81c8a407731

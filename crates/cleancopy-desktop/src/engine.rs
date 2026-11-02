@@ -913,6 +913,22 @@ fn render(original: &Snapshot, format: Format, style: cleancopy_core::NumberingS
     }
 }
 
+/// Markdown detection looks at a bounded prefix so huge clipboards do not
+/// delay the menu (full detection of 3 MB took ~0.7 s in debug builds).
+const DETECT_PREFIX_BYTES: usize = 256 * 1024;
+fn detect_prefix(text: &str) -> &str {
+    if text.len() <= DETECT_PREFIX_BYTES {
+        return text;
+    }
+    let mut end = DETECT_PREFIX_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // Cut at a line boundary so a partial line cannot look like syntax.
+    let cut = text[..end].rfind('\n').map_or(end, |i| i + 1);
+    &text[..cut]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,20 +1170,4 @@ mod tests {
             assert!(engine.menu.is_some());
         }
     }
-}
-
-/// Markdown detection looks at a bounded prefix so huge clipboards do not
-/// delay the menu (full detection of 3 MB took ~0.7 s in debug builds).
-const DETECT_PREFIX_BYTES: usize = 256 * 1024;
-fn detect_prefix(text: &str) -> &str {
-    if text.len() <= DETECT_PREFIX_BYTES {
-        return text;
-    }
-    let mut end = DETECT_PREFIX_BYTES;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    // Cut at a line boundary so a partial line cannot look like syntax.
-    let cut = text[..end].rfind('\n').map_or(end, |i| i + 1);
-    &text[..cut]
 }

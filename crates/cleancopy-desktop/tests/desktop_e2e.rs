@@ -125,8 +125,14 @@ impl Harness {
         } else {
             &["ctrl+shift+v"]
         });
-        wait("menu mapped", || self.menu().is_some());
-        let id = self.menu().unwrap();
+        // Keep the id from the successful search: a second `xdotool search`
+        // can come back empty while unrelated fixture windows are destroyed.
+        let mut found = None;
+        wait("menu mapped", || {
+            found = self.menu();
+            found.is_some()
+        });
+        let id = found.unwrap();
         // Real rendered contents: format-panel interior is white only when expanded.
         wait("menu painted with expected contents", || {
             let p = self.pixel(id, 580, 100);
@@ -378,7 +384,7 @@ fn desktop_runtime_matrix() {
     h.restored(&before);
     println!("PASS (b) Word target receives semantic Word HTML");
     let unknown = h.target("unknown-e2e");
-    let id = h.open(false, true, "secondary");
+    let (id, first_secondary) = h.open_measured(false, true, "secondary", true);
     assert_eq!(
         h.xdo(&["getwindowfocus"]),
         format!("{}\n", fs::read_to_string(unknown.join("window")).unwrap()).as_bytes()
@@ -511,6 +517,45 @@ fn desktop_runtime_matrix() {
     });
     assert_eq!(h.read("text/html"), html_original);
     println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
+
+    // Secondary-menu latency distribution: the first press after launch plus
+    // 19 warm presses, all on a target with no App rule.
+    // (d) remembered a rule for `unknown`; use a second unrecognised target.
+    let fresh = h.target("timing-e2e");
+    h.fixture(b"## Secondary timing\n\n- item\n", "secondary-timing");
+    h.focus(&fresh);
+    let mut samples = vec![first_secondary];
+    for run in 2..=20 {
+        let (_, elapsed) = h.open_measured(false, true, &format!("secondary-run{run}"), false);
+        samples.push(elapsed);
+        h.close();
+    }
+    samples.sort();
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    println!(
+        "MEASURE secondary x{} (first press after launch = {:.2} ms): min {:.2} / median {:.2} / max {:.2} ms",
+        samples.len(),
+        ms(first_secondary),
+        ms(samples[0]),
+        ms((samples[9] + samples[10]) / 2),
+        ms(samples[samples.len() - 1])
+    );
+    // N-1: a 3 MB clipboard on an unrecognised target still shows the
+    // secondary menu first and fills it in afterwards.
+    let mut big = b"## Large secondary\n\n".to_vec();
+    big.resize(3 * 1024 * 1024, b'x');
+    h.fixture(&big, "secondary-3mb");
+    h.focus(&fresh);
+    let ready = h.metadata_completions();
+    let (_, elapsed) = h.open_measured(false, true, "secondary-3MB", false);
+    assert!(
+        elapsed <= Duration::from_millis(100),
+        "3MB secondary exceeded 100 ms: {elapsed:?}"
+    );
+    wait("3MB secondary metadata", || {
+        h.metadata_completions() > ready
+    });
+    h.close();
 
     for mib in [3, 5] {
         let mut source = b"## Large clipboard\n\n".to_vec();

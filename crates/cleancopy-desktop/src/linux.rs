@@ -928,6 +928,47 @@ struct LinuxApp {
     last_sync: Instant,
 }
 impl LinuxApp {
+    fn warm_up_menu(&self, ctx: &eframe::egui::Context, frame: u8) {
+        use crate::engine::{Choice, FormatItem, MenuKind, MenuModel};
+        let config = self.driver.engine.config();
+        let formats: Vec<FormatItem> = config
+            .secondary_items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| FormatItem {
+                format: item.format,
+                shortcut: u8::try_from(index + 2).unwrap_or(u8::MAX),
+                enabled: true,
+                muted: false,
+            })
+            .collect();
+        let model = MenuModel {
+            id: u64::MAX,
+            kind: if frame.is_multiple_of(2) {
+                MenuKind::Secondary
+            } else {
+                MenuKind::Full
+            },
+            app: Default::default(),
+            formats,
+            default_choice: Choice::Original,
+            content_label: if frame > 3 {
+                "正在读取剪贴板…".into()
+            } else {
+                "Markdown".into()
+            },
+            source_chars: 1_234_567,
+            converting: false,
+            original_enabled: true,
+            undo_enabled: true,
+            show_remember: true,
+            target_unrecognized: true,
+            loading: frame > 3,
+            remember: false,
+        };
+        // Throwaway state: never touches the real menu's highlight or events.
+        let _ = crate::ui::menus::MenuState::default().show(ctx, &model, false);
+    }
     fn tray_action(&mut self, action: crate::ui::menus::TrayAction) -> Result<()> {
         use crate::ui::menus::TrayAction;
         let t = self.driver.engine.platform().now();
@@ -1010,7 +1051,9 @@ impl eframe::App for LinuxApp {
         }
         let model = self.driver.engine.platform().menu.clone();
         let id = model.as_ref().map(|m| m.id);
-        if id != self.shown || id.is_none() {
+        // Map only when a menu appears. Loading → filled keeps the mapped
+        // window (re-mapping mid-WM-reparent made it flicker invisible).
+        if id.is_some() != self.shown.is_some() || id.is_none() {
             let p = self.driver.engine.platform();
             if id.is_some() {
                 let (x, y) = p.menu_position(640, 360);
@@ -1037,6 +1080,12 @@ impl eframe::App for LinuxApp {
             let _ = std::io::stdout().flush();
         }
         self.frames = self.frames.saturating_add(1);
+        if model.is_none() && (2..=5).contains(&self.frames) {
+            // Warm-up while the pre-created window is still hidden: lay out
+            // every menu variant once so glyph rasterisation and layout caches
+            // are ready before the first hotkey press (the first-press outlier).
+            self.warm_up_menu(ctx, self.frames);
+        }
         if let Some(model) = model {
             for event in self.menu.show(ctx, &model, false) {
                 let t = self.driver.engine.platform().now();

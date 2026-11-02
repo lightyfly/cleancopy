@@ -48,6 +48,9 @@ impl Platform for Mock {
         self.check("write")?;
         self.writes.push(s.clone());
         self.clipboard = s;
+        if let Some(state) = self.secure_after_write.take() {
+            state.set(true);
+        }
         if let Some(app) = self.focus_after_write.take() {
             self.app = app;
         }
@@ -1316,4 +1319,18 @@ fn secure_input_rechecked_for_menu_and_background_completion() {
             .unwrap()
             .contains("Secure Input"));
     }
+}
+
+#[test]
+fn secure_input_enabled_during_write_prevents_injection_but_restores_clipboard() {
+    let (mut e, state) = secure_engine("# original");
+    let original = e.platform().clipboard.clone();
+    e.platform_mut().secure_after_write = Some(state);
+    hot(&mut e, 0);
+    assert_eq!(e.platform().writes.len(), 1);
+    assert_eq!(e.platform().pastes, 0);
+    assert_eq!(e.next_deadline(), Some(150));
+    timer(&mut e, 150);
+    assert_eq!(e.platform().clipboard, original);
+    assert_eq!(e.platform().writes.len(), 2);
 }

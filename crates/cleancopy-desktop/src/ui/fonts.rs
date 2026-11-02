@@ -15,11 +15,13 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
         PathBuf::from("C:/Windows/Fonts/msyh.ttc"),
     ];
     discover(Path::new("/usr/share/fonts"), &mut candidates);
+    discover(Path::new("/System/Library/Fonts"), &mut candidates);
+    discover(Path::new("/Library/Fonts"), &mut candidates);
+    discover(Path::new("C:/Windows/Fonts"), &mut candidates);
     if let Some(home) = std::env::var_os("HOME") {
-        discover(
-            &PathBuf::from(home).join(".local/share/fonts"),
-            &mut candidates,
-        );
+        let home = PathBuf::from(home);
+        discover(&home.join(".local/share/fonts"), &mut candidates);
+        discover(&home.join("Library/Fonts"), &mut candidates);
     }
     let mut fonts = egui::FontDefinitions::default();
     let mut symbols = vec![
@@ -140,12 +142,67 @@ fn discover_matching(directory: &Path, output: &mut Vec<PathBuf>, symbols: bool)
                 let matches = if symbols {
                     name == "dejavusans.ttf" || name.contains("notosanssymbols")
                 } else {
-                    name.contains("notosanscjk") || name.contains("notosanssc")
+                    name.contains("notosanscjk")
+                        || name.contains("notosanssc")
+                        || (is_bold(&path)
+                            && [
+                                "pingfang",
+                                "hiragino",
+                                "arial",
+                                "dejavusans",
+                                "liberationsans",
+                                "msyh",
+                                "simsun",
+                                "heiti",
+                            ]
+                            .iter()
+                            .any(|family| name.contains(family)))
                 };
                 matches && ["ttc", "ttf", "otf"].iter().any(|ext| name.ends_with(ext))
             })
         {
             output.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cjk_emphasis_uses_distinct_rasterized_bold_glyphs_when_installed() {
+        // This is a native-font integration check, not a requirement to install
+        // Linux font packages on macOS/Windows test runners.
+        if !Path::new("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc").exists() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            ctx.fonts(|fonts| {
+                let normal = fonts.layout_no_wrap(
+                    "剪贴板监听".into(),
+                    egui::FontId::proportional(24.0),
+                    egui::Color32::BLACK,
+                );
+                let bold = fonts.layout_no_wrap(
+                    "剪贴板监听".into(),
+                    egui::FontId::new(24.0, bold_family()),
+                    egui::Color32::BLACK,
+                );
+                let normal_glyphs: Vec<_> =
+                    normal.rows.iter().flat_map(|row| &row.glyphs).collect();
+                let bold_glyphs: Vec<_> = bold.rows.iter().flat_map(|row| &row.glyphs).collect();
+                assert_eq!(normal_glyphs.len(), 5);
+                assert_eq!(bold_glyphs.len(), 5);
+                for (normal, bold) in normal_glyphs.iter().zip(&bold_glyphs) {
+                    assert_ne!(
+                        normal.uv_rect, bold.uv_rect,
+                        "bold must resolve to a different rasterized glyph, not regular fallback"
+                    );
+                }
+            });
+        });
     }
 }

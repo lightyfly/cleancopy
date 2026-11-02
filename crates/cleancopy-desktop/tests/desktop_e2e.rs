@@ -477,7 +477,15 @@ fn desktop_runtime_matrix() {
     let web_output = String::from_utf8(h.paste(&gedit, 3)).unwrap();
     assert!(web_output.contains("一、Web heading"), "{web_output}");
     assert!(web_output.contains("web bold text"), "{web_output}");
-    wait("HTML restored", || h.read("text/html") == html_original);
+    wait("HTML restored", || {
+        let output = Command::new(h.bin.join("examples/target"))
+            .env("DISPLAY", &h.display)
+            .args(["read", "text/html"])
+            .output()
+            .unwrap();
+        output.status.success() && output.stdout == html_original.0
+    });
+    assert_eq!(h.read("text/html"), html_original);
     println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
 
     // More than 200 KiB takes the worker route; cancel via the real Escape key.

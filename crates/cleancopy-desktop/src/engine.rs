@@ -251,7 +251,41 @@ struct Restoration {
 }
 struct Undo {
     app: AppIdentity,
-    original: Snapshot,
+    original: SharedSnapshot,
+}
+
+/// A snapshot kept for a long time (Undo) with identical payloads stored once:
+/// text clipboards repeat one payload under several formats, which would
+/// otherwise keep a large clipboard resident several times over.
+struct SharedSnapshot {
+    formats: Vec<(String, usize)>,
+    payloads: Vec<Vec<u8>>,
+}
+impl SharedSnapshot {
+    fn new(snapshot: Snapshot) -> Self {
+        let mut payloads: Vec<Vec<u8>> = Vec::new();
+        let formats = snapshot
+            .formats
+            .into_iter()
+            .map(|(name, data)| {
+                let index = payloads.iter().position(|p| *p == data).unwrap_or_else(|| {
+                    payloads.push(data);
+                    payloads.len() - 1
+                });
+                (name, index)
+            })
+            .collect();
+        Self { formats, payloads }
+    }
+    fn to_snapshot(&self) -> Snapshot {
+        Snapshot {
+            formats: self
+                .formats
+                .iter()
+                .map(|(name, index)| (name.clone(), self.payloads[*index].clone()))
+                .collect(),
+        }
+    }
 }
 
 /// Owns injected effects and mutable configuration; the caller persists config
@@ -738,7 +772,7 @@ impl<P: Platform> Engine<P> {
         self.platform.send_paste()?;
         self.undo = converted.map(|_| Undo {
             app: capture.app.clone(),
-            original: capture.original,
+            original: SharedSnapshot::new(capture.original),
         });
         self.config.record_paste(&capture.app, converted, t);
         if remember {
@@ -868,10 +902,11 @@ impl<P: Platform> Engine<P> {
         if !self.target(&app)? {
             return Ok(());
         }
-        self.platform.write_clipboard(last.original.clone())?;
+        let original = last.original.to_snapshot();
+        self.platform.write_clipboard(original.clone())?;
         self.restoring = Some(Restoration {
             original: current,
-            written: last.original,
+            written: original,
             deadline: t.saturating_add(RESTORE_DELAY_MS),
         });
         if !self.target(&app)? {

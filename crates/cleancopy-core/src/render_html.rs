@@ -18,24 +18,28 @@ pub fn render_html(input: &str) -> String {
 /// parent `<li>`, empty items are dropped, and every list has an explicit
 /// `list-style-type` so nested bullets are never renumbered.
 pub(crate) fn render_html_with(input: &str, word_lists: bool) -> String {
-    let arena = Arena::new();
-    let root = parse::parse(&arena, input);
-
-    // Language metadata is not needed without highlighting. Clearing it also
-    // avoids comrak's special treatment of ```math and language CSS classes.
-    for node in root.descendants() {
-        if let NodeValue::CodeBlock(code) = &mut node.data.borrow_mut().value {
-            code.info.clear();
-        }
-    }
-
-    if crate::cancel::cancelled() {
-        return String::new();
-    }
     let mut options = parse::options();
     options.render.escape = true;
     let mut bytes = Vec::new();
-    comrak::format_html(root, &options, &mut bytes).expect("writing HTML to a Vec cannot fail");
+    // Top-level blocks render independently, so chunks concatenate to the
+    // same HTML while only one chunk's AST is alive (parse::chunks).
+    for chunk in parse::chunks(input) {
+        let arena = Arena::new();
+        let root = parse::parse(&arena, chunk);
+
+        // Language metadata is not needed without highlighting. Clearing it also
+        // avoids comrak's special treatment of ```math and language CSS classes.
+        for node in root.descendants() {
+            if let NodeValue::CodeBlock(code) = &mut node.data.borrow_mut().value {
+                code.info.clear();
+            }
+        }
+
+        if crate::cancel::cancelled() {
+            return String::new();
+        }
+        comrak::format_html(root, &options, &mut bytes).expect("writing HTML to a Vec cannot fail");
+    }
     let mut html = String::from_utf8(bytes).expect("comrak emits UTF-8 HTML");
 
     // These exact tags/attributes are emitted by comrak with our fixed options.

@@ -13,8 +13,43 @@ use std::{collections::HashMap, fmt::Write};
 /// Raw HTML is likewise shown literally. Unicode uses signed UTF-16 units with
 /// one fallback character per unit, including both halves of surrogate pairs.
 pub fn render_rtf(input: &str) -> String {
-    let arena = Arena::new();
-    let root = parse::parse(&arena, input);
+    let chunks = parse::chunks(input);
+    let mut table = String::new();
+    let mut body = String::new();
+    let mut ids = HashMap::new();
+    let mut list_count = 0;
+    let mut h1_count = 0;
+    let mut first_is_h1 = false;
+    for (index, chunk) in chunks.iter().enumerate() {
+        if crate::cancel::cancelled() {
+            break;
+        }
+        // Each chunk's AST is dropped before the next is parsed, so large
+        // documents never hold more than one chunk's nodes (parse::chunks).
+        let arena = Arena::new();
+        let root = parse::parse(&arena, chunk);
+        let is_h1 = |n: &AstNode<'_>| matches!(&n.data.borrow().value, NodeValue::Heading(h) if h.level == 1);
+        if index == 0 {
+            first_is_h1 = root.first_child().is_some_and(is_h1);
+        }
+        h1_count += root.children().filter(|n| is_h1(n)).count();
+        ids.clear();
+        list_count += list_table(root, list_count + 1, &mut table, &mut ids);
+        // The title is decided once the whole document is known (below).
+        let mut renderer = Renderer {
+            out: std::mem::take(&mut body),
+            ids: std::mem::take(&mut ids),
+            title: None,
+        };
+        renderer.block(root, Context::default());
+        body = renderer.out;
+        ids = renderer.ids;
+    }
+    // A single leading H1 is the document title (design.md §7.1): it is the
+    // first paragraph of the body, so swap its Heading 1 style for Title.
+    if first_is_h1 && h1_count == 1 {
+        body = body.replacen(HEADING1_STYLE, TITLE_STYLE, 1);
+    }
     let mut out = String::from(
         "{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1\n\
          {\\fonttbl{\\f0\\fswiss Arial;}{\\f1\\fmodern Courier New;}}\n\
@@ -26,63 +61,13 @@ pub fn render_rtf(input: &str) -> String {
          {\\s3\\styrsid3\\sbasedon0\\snext0\\keepn\\b\\fs26\\outlinelevel2 Heading 3;}\
          {\\s15\\sbasedon0\\snext0\\keepn\\b\\fs52 Title;}}\n",
     );
-    let lists: Vec<_> = root
-        .descendants()
-        .filter(|n| matches!(n.data.borrow().value, NodeValue::List(_)))
-        .collect();
-    let mut ids = HashMap::new();
-    if !lists.is_empty() {
+    if list_count > 0 {
         out.push_str("{\\*\\listtable\n");
-        for (index, node) in lists.iter().enumerate() {
-            if crate::cancel::cancelled() {
-                break;
-            }
-            let id = index + 1;
-            ids.insert(*node as *const AstNode<'_> as usize, id);
-            let mut levels: Vec<NodeList> = node
-                .ancestors()
-                .filter_map(|n| match n.data.borrow().value {
-                    NodeValue::List(list) => Some(list),
-                    _ => None,
-                })
-                .collect();
-            levels.reverse();
-            let current = *levels.last().expect("list includes itself");
-            write!(out, "{{\\list\\listtemplateid{id}\\listhybrid").unwrap();
-            // RTF supports nine levels. Deeper Markdown is retained at level 8.
-            for level in 0..9 {
-                let list = if level == 8 && levels.len() > 9 {
-                    current
-                } else {
-                    levels.get(level).copied().unwrap_or(current)
-                };
-                let ordered = list.list_type == ListType::Ordered;
-                let start = if ordered { list.start } else { 1 };
-                let nfc = if ordered { 0 } else { 23 };
-                write!(out, "{{\\listlevel\\levelnfc{nfc}\\levelnfcn{nfc}\\leveljc0\\leveljcn0\\levelfollow0\\levelstartat{start}").unwrap();
-                if ordered {
-                    let delimiter = if list.delimiter == ListDelimType::Paren {
-                        ')'
-                    } else {
-                        '.'
-                    };
-                    write!(
-                        out,
-                        "{{\\leveltext\\'02\\'0{level}{delimiter};}}{{\\levelnumbers\\'01;}}"
-                    )
-                    .unwrap();
-                } else {
-                    out.push_str("{\\leveltext\\'01\\u8226?;}{\\levelnumbers;}");
-                }
-                let indent = (level + 1) * 720;
-                write!(out, "\\f0\\fi-360\\li{indent}\\jclisttab\\tx{indent}}}").unwrap();
-            }
-            writeln!(out, "\\listid{id}}}").unwrap();
-        }
+        out.push_str(&table);
         out.push_str("}\n{\\*\\listoverridetable");
         // A distinct list/override per AST list prevents unrelated lists and
         // repeated nested lists from accidentally sharing counters.
-        for id in 1..=lists.len() {
+        for id in 1..=list_count {
             if crate::cancel::cancelled() {
                 break;
             }
@@ -95,11 +80,73 @@ pub fn render_rtf(input: &str) -> String {
         out.push_str("}\n");
     }
     out.push_str("\\viewkind4\\paperw12240\\paperh15840\\margl1440\\margr1440\n");
-    let title = parse::title_heading(root).map(|n| n as *const AstNode<'_> as usize);
-    let mut renderer = Renderer { out, ids, title };
-    renderer.block(root, Context::default());
-    renderer.out.push_str("}\n");
-    renderer.out
+    out.push_str(&body);
+    out.push_str("}\n");
+    out
+}
+
+const HEADING1_STYLE: &str = "\\s1\\b\\fs36\\keepn\\outlinelevel0";
+const TITLE_STYLE: &str = "\\s15\\b\\fs52\\keepn";
+
+/// Append `\\list` entries for every list under `root`, numbered from
+/// `first_id`, recording each list's id. Returns how many were written.
+fn list_table<'a>(
+    root: &'a AstNode<'a>,
+    first_id: usize,
+    out: &mut String,
+    ids: &mut HashMap<usize, usize>,
+) -> usize {
+    let lists: Vec<_> = root
+        .descendants()
+        .filter(|n| matches!(n.data.borrow().value, NodeValue::List(_)))
+        .collect();
+    for (index, node) in lists.iter().enumerate() {
+        if crate::cancel::cancelled() {
+            break;
+        }
+        let id = first_id + index;
+        ids.insert(*node as *const AstNode<'_> as usize, id);
+        let mut levels: Vec<NodeList> = node
+            .ancestors()
+            .filter_map(|n| match n.data.borrow().value {
+                NodeValue::List(list) => Some(list),
+                _ => None,
+            })
+            .collect();
+        levels.reverse();
+        let current = *levels.last().expect("list includes itself");
+        write!(out, "{{\\list\\listtemplateid{id}\\listhybrid").unwrap();
+        // RTF supports nine levels. Deeper Markdown is retained at level 8.
+        for level in 0..9 {
+            let list = if level == 8 && levels.len() > 9 {
+                current
+            } else {
+                levels.get(level).copied().unwrap_or(current)
+            };
+            let ordered = list.list_type == ListType::Ordered;
+            let start = if ordered { list.start } else { 1 };
+            let nfc = if ordered { 0 } else { 23 };
+            write!(out, "{{\\listlevel\\levelnfc{nfc}\\levelnfcn{nfc}\\leveljc0\\leveljcn0\\levelfollow0\\levelstartat{start}").unwrap();
+            if ordered {
+                let delimiter = if list.delimiter == ListDelimType::Paren {
+                    ')'
+                } else {
+                    '.'
+                };
+                write!(
+                    out,
+                    "{{\\leveltext\\'02\\'0{level}{delimiter};}}{{\\levelnumbers\\'01;}}"
+                )
+                .unwrap();
+            } else {
+                out.push_str("{\\leveltext\\'01\\u8226?;}{\\levelnumbers;}");
+            }
+            let indent = (level + 1) * 720;
+            write!(out, "\\f0\\fi-360\\li{indent}\\jclisttab\\tx{indent}}}").unwrap();
+        }
+        writeln!(out, "\\listid{id}}}").unwrap();
+    }
+    lists.len()
 }
 
 #[derive(Clone, Copy)]
@@ -174,10 +221,10 @@ impl Renderer {
                     NodeValue::Heading(_)
                         if self.title == Some(node as *const AstNode<'_> as usize) =>
                     {
-                        "\\s15\\b\\fs52\\keepn"
+                        TITLE_STYLE
                     }
                     NodeValue::Heading(h) => match h.level {
-                        1 => "\\s1\\b\\fs36\\keepn\\outlinelevel0",
+                        1 => HEADING1_STYLE,
                         2 => "\\s2\\b\\fs30\\keepn\\outlinelevel1",
                         3 => "\\s3\\b\\fs26\\keepn\\outlinelevel2",
                         _ => "\\b\\fs24\\keepn",

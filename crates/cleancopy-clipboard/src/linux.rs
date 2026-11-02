@@ -574,13 +574,25 @@ impl Owner {
         let x = Inspector::new()?;
         let targets = x.atom(b"TARGETS")?;
         let mut data = HashMap::new();
+        // Text clipboards repeat one payload under many targets (UTF8_STRING,
+        // text/plain, TEXT, ...); share identical bytes so a 5 MB clipboard is
+        // held once, not once per target.
+        let mut shared: Vec<Arc<[u8]>> = Vec::new();
         for target in &snapshot.targets {
+            let bytes = match shared.iter().find(|b| b[..] == target.data[..]) {
+                Some(bytes) => Arc::clone(bytes),
+                None => {
+                    let bytes: Arc<[u8]> = Arc::from(target.data.as_slice());
+                    shared.push(Arc::clone(&bytes));
+                    bytes
+                }
+            };
             data.insert(
                 x.atom(&target.target)?,
                 PropertyData {
                     type_: x.atom(&target.type_name)?,
                     format: target.format,
-                    data: Arc::from(target.data.as_slice()),
+                    data: bytes,
                 },
             );
         }

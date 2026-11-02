@@ -24,13 +24,28 @@ pub enum NumberingStyle {
 /// Source markers are ignored. Beyond named Chinese levels, decimal paths
 /// provide unambiguous numbering without a nesting limit.
 pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
-    let arena = Arena::new();
-    let root = parse::parse(&arena, markdown);
+    // Large documents are handled one chunk of top-level blocks at a time
+    // (parse::chunks). The heading outline decides document-wide numbering,
+    // so collect it first, then render with one renderer across chunks.
+    let chunks = parse::chunks(markdown);
+    let mut levels = Vec::new();
+    let mut first_is_h1 = false;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let arena = Arena::new();
+        let root = parse::parse(&arena, chunk);
+        for (position, node) in root.children().enumerate() {
+            if let NodeValue::Heading(h) = &node.data.borrow().value {
+                levels.push(h.level);
+                first_is_h1 |= index == 0 && position == 0 && h.level == 1;
+            }
+        }
+    }
     // A single leading H1 is the unnumbered document title and H2 becomes the
     // first numbered level; with several H1s (or one that is not first) H1 is
     // numbered. A document without any H1 numbers from H2 like the title case.
-    let offset = usize::from(parse::title_heading(root).is_some() || parse::has_no_h1(root));
-    let list_base = document_list_base(root, style, offset);
+    let h1_count = levels.iter().filter(|&&l| l == 1).count();
+    let offset = usize::from((first_is_h1 && h1_count == 1) || h1_count == 0);
+    let list_base = document_list_base(&levels, style, offset);
     let mut renderer = Renderer {
         offset,
         list_base,
@@ -39,7 +54,23 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
         heading_level: 0,
         next_list: 1,
     };
-    renderer.blocks(root)
+    let mut out = String::new();
+    for chunk in chunks {
+        if crate::cancel::cancelled() {
+            break;
+        }
+        let arena = Arena::new();
+        // A chunk never starts with a list, so the heading-then-list single
+        // newline inside Renderer::blocks never spans a chunk boundary.
+        let text = renderer.blocks(parse::parse(&arena, chunk));
+        if !text.is_empty() {
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(&text);
+        }
+    }
+    out
 }
 
 struct Renderer {
@@ -214,12 +245,10 @@ fn numbered_level(style: NumberingStyle, heading: u8, offset: usize) -> Option<u
 /// List base for the whole document: the rung after the deepest heading
 /// scheme any outline heading uses, so no list ever shares a marker shape
 /// with a heading (e.g. headings reach `1.` → every list starts at （1）).
-fn document_list_base<'a>(root: &'a AstNode<'a>, style: NumberingStyle, offset: usize) -> usize {
-    root.children()
-        .filter_map(|node| match &node.data.borrow().value {
-            NodeValue::Heading(h) => numbered_level(style, h.level, offset),
-            _ => None,
-        })
+fn document_list_base(levels: &[u8], style: NumberingStyle, offset: usize) -> usize {
+    levels
+        .iter()
+        .filter_map(|&h| numbered_level(style, h, offset))
         .filter(|&level| level > 0)
         .filter_map(|level| heading_rung(style, level))
         .map(|rung| rung + 1)

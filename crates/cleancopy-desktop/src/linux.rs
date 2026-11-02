@@ -48,7 +48,11 @@ pub struct LinuxPlatform {
     menu_keys: Vec<u8>,
     menu: Option<MenuModel>,
     verified_window: Option<Window>,
-    last_write: Option<(NativeSnapshot, Snapshot)>,
+    /// What we last wrote: a fingerprint of the native targets, plus the
+    /// logical snapshot only when it differs from what reading the native
+    /// targets back would give. Keeping the native bytes themselves would
+    /// duplicate a large clipboard two more times (report v5 memory).
+    last_write: Option<(u64, Option<Snapshot>)>,
     pending_read: Option<std::sync::mpsc::Receiver<std::result::Result<NativeSnapshot, String>>>,
     epoch: u64,
     started: Instant,
@@ -429,12 +433,7 @@ impl Platform for LinuxPlatform {
     }
     fn read_clipboard(&mut self) -> Result<Snapshot> {
         let native = self.clipboard.read_snapshot().map_err(err)?;
-        if let Some((last, snapshot)) = &self.last_write {
-            if *last == native {
-                return Ok(snapshot.clone());
-            }
-        }
-        Ok(encode_snapshot(&native))
+        Ok(self.logical_snapshot(&native))
     }
     fn begin_clipboard_read(&mut self) -> bool {
         // Each read uses its own X11 connection, so it can run on a worker.
@@ -457,15 +456,17 @@ impl Platform for LinuxPlatform {
             }
         };
         self.pending_read = None;
-        Some(result.map_err(err).map(|native| match &self.last_write {
-            Some((last, snapshot)) if *last == native => snapshot.clone(),
-            _ => encode_snapshot(&native),
-        }))
+        Some(
+            result
+                .map_err(err)
+                .map(|native| self.logical_snapshot(&native)),
+        )
     }
     fn write_clipboard(&mut self, snapshot: Snapshot) -> Result<()> {
         let native = decode_snapshot(&snapshot)?;
         self.clipboard.write_snapshot(&native).map_err(err)?;
-        self.last_write = Some((native, snapshot));
+        let logical = (encode_snapshot(&native) != snapshot).then_some(snapshot);
+        self.last_write = Some((fingerprint(&native), logical));
         Ok(())
     }
     fn send_paste(&mut self) -> Result<()> {
@@ -879,6 +880,25 @@ fn unhex(value: &str) -> Result<Vec<u8>> {
         .map(|i| u8::from_str_radix(&value[i..i + 2], 16).map_err(err))
         .collect()
 }
+impl LinuxPlatform {
+    fn logical_snapshot(&self, native: &NativeSnapshot) -> Snapshot {
+        match &self.last_write {
+            Some((last, Some(snapshot))) if *last == fingerprint(native) => snapshot.clone(),
+            _ => encode_snapshot(native),
+        }
+    }
+}
+
+fn fingerprint(native: &NativeSnapshot) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for t in &native.targets {
+        (t.format, &t.target, &t.type_name, &t.data).hash(&mut hasher);
+    }
+    native.targets.len().hash(&mut hasher);
+    hasher.finish()
+}
+
 fn encode_snapshot(native: &NativeSnapshot) -> Snapshot {
     let mut result = Snapshot::default();
     for target in &native.targets {
@@ -1101,6 +1121,7 @@ impl ksni::Tray for NativeTray {
 
 /// Run the background helper and nonactivating native menu on the main thread.
 pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
+    tune_allocator();
     use eframe::egui;
     use ksni::blocking::TrayMethods;
     let enabled = config.paused_until.is_none_or(|until| until <= unix_ms());
@@ -1592,6 +1613,20 @@ impl eframe::App for LinuxApp {
         });
         // Native mapping is managed above, not through focus-affecting viewport commands.
         let _ = egui::ViewportId::ROOT;
+    }
+}
+
+/// Large clipboards and rendered formats are multi-megabyte buffers. glibc's
+/// dynamic mmap threshold climbs to 32 MB after the first such buffer is
+/// freed, after which they land in the brk heap, interleave with long-lived
+/// allocations and stay resident after the job (report v5: steady RSS ~230 MB
+/// after one 5 MB paste). A fixed threshold keeps every big buffer in its own
+/// mapping, returned to the OS the moment it is freed.
+fn tune_allocator() {
+    #[cfg(target_env = "gnu")]
+    // SAFETY: mallopt only changes allocator tuning parameters.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 256 * 1024);
     }
 }
 

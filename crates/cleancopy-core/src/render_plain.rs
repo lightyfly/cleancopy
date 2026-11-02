@@ -10,6 +10,25 @@ use comrak::{
 const RULE: &str = "────────";
 
 pub fn render_plain(input: &str) -> String {
+    let chunks = parse::chunks(input);
+    if chunks.len() > 1 {
+        // Chunked documents have no footnote definitions (parse::chunks).
+        let mut output = String::new();
+        for chunk in chunks {
+            if crate::cancel::cancelled() {
+                break;
+            }
+            let arena = Arena::new();
+            let text = blocks(parse::parse(&arena, chunk), &[]);
+            if !text.is_empty() {
+                if !output.is_empty() {
+                    output.push_str("\n\n");
+                }
+                output.push_str(&text);
+            }
+        }
+        return finish(output);
+    }
     let arena = Arena::new();
     let root = parse::parse(&arena, input);
     let mut output = blocks(root, &[]);
@@ -31,6 +50,10 @@ pub fn render_plain(input: &str) -> String {
             output.push_str(&format!("[{ix}] {text}"));
         }
     }
+    finish(output)
+}
+
+fn finish(mut output: String) -> String {
     if !output.is_empty() && !output.ends_with('\n') {
         output.push('\n');
     }

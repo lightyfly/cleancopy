@@ -469,7 +469,22 @@ impl NativeClipboard {
     }
 }
 
-const CHUNK_BYTES: usize = 64 * 1024;
+/// INCR chunk size. Stays below the core X11 maximum request (256 KiB) with
+/// room for the ChangeProperty header, so no BIG-REQUESTS extension is needed.
+const CHUNK_BYTES: usize = 240 * 1024;
+
+/// Short adaptive sleep for nonblocking X11 polling: INCR transfers exchange
+/// one round trip per chunk, so a fixed 2 ms sleep dominated large reads.
+#[derive(Default)]
+struct Backoff(u32);
+impl Backoff {
+    fn wait(&mut self) {
+        // 50 µs doubling to a 2 ms ceiling.
+        let micros = (50u64 << self.0.min(6)).min(2000);
+        self.0 = self.0.saturating_add(1);
+        thread::sleep(Duration::from_micros(micros));
+    }
+}
 #[derive(Clone)]
 struct PropertyData {
     type_: Atom,
@@ -695,6 +710,7 @@ impl Owner {
     }
     fn run(mut self, stop: &AtomicBool) {
         let mut retiring = None;
+        let mut backoff = Backoff::default();
         let mut drain_synchronized = false;
         loop {
             if stop.load(Ordering::Acquire) && retiring.is_none() {
@@ -708,7 +724,11 @@ impl Owner {
             if retiring.is_some_and(|since: Instant| since.elapsed() >= Duration::from_secs(3)) {
                 break;
             }
-            match self.x.conn.poll_for_event() {
+            let polled = self.x.conn.poll_for_event();
+            if matches!(polled, Ok(Some(_))) {
+                backoff = Backoff::default();
+            }
+            match polled {
                 Ok(Some(Event::SelectionClear(event))) if event.selection == self.x.selection => {
                     // Previously accepted INCR transfers still belong to this connection.
                     retiring.get_or_insert_with(Instant::now);
@@ -736,7 +756,7 @@ impl Owner {
                     }
                     drain_synchronized = true;
                 }
-                Ok(None) => thread::sleep(Duration::from_millis(2)),
+                Ok(None) => backoff.wait(),
                 Err(_) => break,
             }
             self.transfers
@@ -810,6 +830,7 @@ impl Inspector {
             .owner)
     }
     fn event(&self, deadline: Instant) -> Result<Event> {
+        let mut backoff = Backoff::default();
         loop {
             if let Some(event) = self.conn.poll_for_event().map_err(error)? {
                 return Ok(event);
@@ -817,7 +838,7 @@ impl Inspector {
             if Instant::now() >= deadline {
                 return Err(error("X11 clipboard conversion timed out"));
             }
-            thread::sleep(Duration::from_millis(2));
+            backoff.wait();
         }
     }
     fn atom_name(&self, atom: Atom) -> Result<Vec<u8>> {

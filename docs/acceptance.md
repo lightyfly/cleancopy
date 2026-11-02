@@ -120,3 +120,15 @@ as part of this change).
 - First launch (config without `onboarding_done`) → daemon spawns `--onboarding`; 完成/跳过 persist the flag; tray 「使用引导…」 reopens it. e2e: `PASS onboarding: …`.
 - Step 3 hotkey inside the input inserts the formatted sample (unit test `hotkey_paste_formats_but_plain_paste_stays_raw`; e2e capture onboarding-3.png).
 - macOS Accessibility (AXIsProcessTrusted / prompt) is cross-compile checked only (aarch64-apple-darwin clippy), never run.
+
+## Round v3 (2026-11-02, UTC+8)
+
+- Onboarding: step 1 key-cap lines 「智能粘贴」/「打开完整菜单」 follow the configured hotkeys; step 3 green ✓ hint under the right box with a 12px gap to the button bar (measured on docs/screenshots/onboarding-3.png: green rows 285–295, bar line 308); detection follows any configured hotkey (`try_step_follows_a_non_v_configured_hotkey`).
+- B-1 idle CPU (40s, release, Xvfb + xfwm4): 116.74% before → 0.25% after (event-driven loop: X11 socket poll + tray waker, 1s idle tick).
+- B-2: 取消 fires on pointer press, works after a single move with no prior hover (`cancel_works_with_single_move_then_click_and_no_prior_hover`).
+- B-3: target badge always painted while converting (`converting_always_paints_the_locked_target_badge`). The reported “Markdown” case was not reproduced; the long-label case failed before the fix.
+- B-4: 「Markdown 原样」 from HTML sources uses ATX headings without closing `#` (`markdown_output_uses_atx_headings_without_closing_hashes`). Only the HTML-source path was affected.
+- Item 3 / O-1: first secondary-menu trigger across fresh launches was 46.0–51.0ms (8 runs, median 48.9). After 60s idle: 44.3/45.4/48.1ms. With 8-core load: median 51.5, max 54.2. The menu maps 1.2–2.1ms into its frame. The 159ms spike was not reproduced.
+- Item 6: Chinese numbering rule, see design.md §7.1 and tests in tests/numbered.rs.
+- Item 7: e2e screenshots go to target/e2e-screenshots by default; `scripts/e2e-desktop.sh --update-screenshots` writes docs/screenshots.
+- e2e: exit 0, 13 PASS lines (docs/desktop-e2e-run.log).

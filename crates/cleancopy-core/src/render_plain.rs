@@ -63,6 +63,7 @@ fn inline<'a>(node: &'a AstNode<'a>) -> String {
 
 fn blocks<'a>(node: &'a AstNode<'a>, path: &[usize]) -> String {
     node.children()
+        .take_while(|_| !crate::cancel::cancelled())
         .map(|child| block(child, path))
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()

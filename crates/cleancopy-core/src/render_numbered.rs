@@ -45,6 +45,9 @@ impl Renderer {
         let mut out = String::new();
         let mut previous_heading = false;
         for child in node.children() {
+            if crate::cancel::cancelled() {
+                break;
+            }
             let is_list = matches!(child.data.borrow().value, NodeValue::List(_));
             let is_heading = matches!(child.data.borrow().value, NodeValue::Heading(_));
             let text = self.block(child);

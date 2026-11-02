@@ -1,5 +1,6 @@
 //! Platform-independent Markdown parsing and renderers.
 
+pub mod cancel;
 pub mod detect;
 pub mod parse;
 pub mod render_numbered;

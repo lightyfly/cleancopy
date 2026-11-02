@@ -643,11 +643,11 @@ impl<P: Platform> Engine<P> {
         let worker_cancelled = cancelled.clone();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            if worker_cancelled.load(Ordering::Relaxed) {
-                return;
-            }
-            let result = render(&source, format, style);
-            if !worker_cancelled.load(Ordering::Relaxed) {
+            // Renderers poll the token at block boundaries and stop early;
+            // partial output from a cancelled run is never published.
+            if let Some(result) =
+                cleancopy_core::cancel::run(&worker_cancelled, || render(&source, format, style))
+            {
                 let _ = sender.send(result);
             }
         });

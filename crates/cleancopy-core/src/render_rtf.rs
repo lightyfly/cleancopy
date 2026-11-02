@@ -33,6 +33,9 @@ pub fn render_rtf(input: &str) -> String {
     if !lists.is_empty() {
         out.push_str("{\\*\\listtable\n");
         for (index, node) in lists.iter().enumerate() {
+            if crate::cancel::cancelled() {
+                break;
+            }
             let id = index + 1;
             ids.insert(*node as *const AstNode<'_> as usize, id);
             let mut levels: Vec<NodeList> = node
@@ -79,6 +82,9 @@ pub fn render_rtf(input: &str) -> String {
         // A distinct list/override per AST list prevents unrelated lists and
         // repeated nested lists from accidentally sharing counters.
         for id in 1..=lists.len() {
+            if crate::cancel::cancelled() {
+                break;
+            }
             write!(
                 out,
                 "{{\\listoverride\\listid{id}\\listoverridecount0\\ls{id}}}"
@@ -155,6 +161,9 @@ impl Renderer {
     }
 
     fn block<'a>(&mut self, node: &'a AstNode<'a>, ctx: Context) {
+        if crate::cancel::cancelled() {
+            return;
+        }
         match &node.data.borrow().value {
             NodeValue::Paragraph | NodeValue::Heading(_) => {
                 let style = match &node.data.borrow().value {

@@ -20,6 +20,9 @@ pub fn render_html(input: &str) -> String {
         }
     }
 
+    if crate::cancel::cancelled() {
+        return String::new();
+    }
     let mut options = parse::options();
     options.render.escape = true;
     let mut bytes = Vec::new();

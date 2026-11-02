@@ -93,7 +93,7 @@ impl MenuState {
                         Pos2::new(summary.right() - badge_width, summary.top() + 5.0),
                         Vec2::new(badge_width, 20.0),
                     );
-                    let (label, color, bg) = if model.show_remember {
+                    let (label, color, bg) = if model.target_unrecognized {
                         (
                             "未识别目标".to_owned(),
                             Color32::from_rgb(178, 94, 9),
@@ -815,6 +815,7 @@ mod tests {
             original_enabled: true,
             undo_enabled: false,
             show_remember: true,
+            target_unrecognized: true,
             remember: false,
         };
         let mut state = MenuState {
@@ -936,6 +937,7 @@ mod tests {
             original_enabled: true,
             undo_enabled: true,
             show_remember: true,
+            target_unrecognized: true,
             remember: false,
         }
     }

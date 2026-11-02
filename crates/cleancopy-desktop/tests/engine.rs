@@ -1381,3 +1381,28 @@ fn chatgpt_code_block_header_never_leaks_into_code() {
         }
     }
 }
+
+#[test]
+fn large_conversion_keeps_the_target_locked_at_hotkey_time() {
+    // Unknown app: secondary menu, choose a format, conversion runs in the
+    // background. The progress menu must keep the captured target and its
+    // "unrecognized" badge (it previously flipped to the app name).
+    let mut e = engine(
+        "xmessage",
+        &format!("# Title\n\n{}", "**bold** text\n\n".repeat(18_000)),
+    );
+    hot(&mut e, 0);
+    let first = e.platform().menus[0].clone();
+    assert!(first.target_unrecognized);
+    choose(&mut e, 1, Choice::Format(Format::PlainStripped));
+    let progress = e.platform().menus.last().unwrap().clone();
+    assert!(progress.converting);
+    assert_eq!(
+        progress.app, first.app,
+        "target re-detected during conversion"
+    );
+    assert!(
+        progress.target_unrecognized,
+        "badge changed during conversion"
+    );
+}

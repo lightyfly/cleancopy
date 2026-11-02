@@ -129,6 +129,9 @@ pub struct MenuModel {
     pub original_enabled: bool,
     pub undo_enabled: bool,
     pub show_remember: bool,
+    /// Whether the target captured at hotkey time has no App→format rule.
+    /// Fixed for the menu's lifetime (the badge never re-detects the target).
+    pub target_unrecognized: bool,
     pub remember: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -525,6 +528,7 @@ impl<P: Platform> Engine<P> {
                 .as_ref()
                 .is_some_and(|u| same_target(&u.app, &capture.app)),
             show_remember: self.config.format_for(&capture.app).is_none(),
+            target_unrecognized: self.config.format_for(&capture.app).is_none(),
             remember: false,
         };
         self.platform.show_menu(model.clone())?;

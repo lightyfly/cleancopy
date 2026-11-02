@@ -188,6 +188,31 @@ impl LinuxPlatform {
             .map_err(err)?
             .atom)
     }
+    fn is_transient_popup(&self, window: Window) -> Result<bool> {
+        let type_atom = self.atom(b"_NET_WM_WINDOW_TYPE")?;
+        let types: Vec<u32> = self
+            .conn
+            .get_property(false, window, type_atom, AtomEnum::ATOM, 0, 16)
+            .map_err(err)?
+            .reply()
+            .map_err(err)?
+            .value32()
+            .map(|v| v.collect())
+            .unwrap_or_default();
+        for name in [
+            &b"_NET_WM_WINDOW_TYPE_NOTIFICATION"[..],
+            b"_NET_WM_WINDOW_TYPE_POPUP_MENU",
+            b"_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+            b"_NET_WM_WINDOW_TYPE_TOOLTIP",
+            b"_NET_WM_WINDOW_TYPE_COMBO",
+            b"_NET_WM_WINDOW_TYPE_DND",
+        ] {
+            if types.contains(&self.atom(name)?) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
     fn active_window(&self) -> Result<Window> {
         let atom = self.atom(b"_NET_ACTIVE_WINDOW")?;
         let property = self
@@ -369,6 +394,18 @@ impl Platform for LinuxPlatform {
             .map_err(err)?
             .value32()
             .and_then(|mut v| v.next());
+        // CleanCopy's own windows and transient system popups are never
+        // paste targets; the target is locked at hotkey time instead.
+        if pid == Some(std::process::id()) {
+            return Err(err(
+                "foreground window belongs to CleanCopy; not a paste target",
+            ));
+        }
+        if self.is_transient_popup(window)? {
+            return Err(err(
+                "foreground window is a system popup; not a paste target",
+            ));
+        }
         let exe = pid
             .and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok())
             .and_then(|path| {

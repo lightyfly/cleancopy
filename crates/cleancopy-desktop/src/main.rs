@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (Config::load(&path)?, Some(path))
     };
     let size = match view {
-        View::Settings => egui::vec2(1120.0, 720.0),
+        View::Settings => cleancopy_desktop::ui::settings::DEFAULT_SIZE,
         View::Menu | View::MenuSecondary => egui::vec2(960.0, 600.0),
         View::Tray => egui::vec2(720.0, 520.0),
     };

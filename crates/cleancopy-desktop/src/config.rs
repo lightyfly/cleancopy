@@ -520,6 +520,14 @@ fn default_app_rules() -> Vec<AppRule> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn default_config_has_no_test_only_apps() {
+        let config = Config::default();
+        let text = format!("{:?}", config.app_rules);
+        assert!(!text.to_lowercase().contains("e2e"), "{text}");
+        assert!(!text.to_lowercase().contains("unknown"), "{text}");
+    }
+
     use super::*;
 
     #[test]

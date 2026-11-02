@@ -68,12 +68,13 @@ impl SettingsState {
                 ui.style_mut().visuals = egui::Visuals::light();
                 ui.style_mut().visuals.selection.bg_fill = ACCENT;
                 ui.style_mut().visuals.override_text_color = Some(TEXT);
-                ui.style_mut().spacing.item_spacing = Vec2::new(8.0, 8.0);
+                ui.style_mut().spacing.item_spacing = Vec2::new(8.0, 5.0);
                 ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                 let origin = ui.max_rect().min;
-                let window = egui::Rect::from_min_size(origin, Vec2::new(1120.0, 720.0));
+                let size = ui.max_rect().size().max(Vec2::new(MIN_WIDTH, 480.0));
+                let window = egui::Rect::from_min_size(origin, size);
                 ui.set_min_size(window.size());
-                let title = egui::Rect::from_min_size(origin, Vec2::new(1120.0, 44.0));
+                let title = egui::Rect::from_min_size(origin, Vec2::new(size.x, 44.0));
                 ui.painter().text(
                     title.center(),
                     egui::Align2::CENTER_CENTER,
@@ -99,24 +100,27 @@ impl SettingsState {
                     .hline(title.x_range(), title.bottom(), Stroke::new(1.0_f32, LINE));
                 let left = egui::Rect::from_min_size(
                     origin + Vec2::new(0.0, 44.0),
-                    Vec2::new(440.0, 676.0),
+                    Vec2::new(LEFT_WIDTH, size.y - 44.0),
                 );
                 ui.painter()
                     .vline(left.right(), left.y_range(), Stroke::new(1.0_f32, LINE));
                 let mut left_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .id_salt("settings_left")
-                        .max_rect(left.shrink2(Vec2::new(24.0, 20.0))),
+                        .max_rect(left.shrink2(Vec2::new(20.0, 16.0))),
                 );
+                // The left column scrolls on its own; the preview stays fixed.
                 egui::ScrollArea::vertical()
                     .id_salt("settings_controls")
+                    .auto_shrink([false, false])
+                    .max_height(left.height() - 32.0)
                     .show(&mut left_ui, |ui| {
-                        ui.set_width(392.0);
+                        ui.set_width(LEFT_WIDTH - 52.0);
                         changed |= self.controls(ui, config);
                     });
                 let right = egui::Rect::from_min_size(
-                    origin + Vec2::new(440.0, 44.0),
-                    Vec2::new(680.0, 676.0),
+                    origin + Vec2::new(LEFT_WIDTH, 44.0),
+                    Vec2::new(size.x - LEFT_WIDTH, size.y - 44.0),
                 );
                 ui.painter()
                     .rect_filled(right, 0.0, Color32::from_rgb(250, 250, 251));
@@ -191,16 +195,14 @@ impl SettingsState {
             });
         });
         card(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("app_groups")
-                .max_height(228.0)
-                .show(ui, |ui| {
+            {
+                {
                     for (name, indices) in grouped_rules(&config.app_rules) {
                         let mut format = config.app_rules[indices[0]].format;
                         let mixed = indices
                             .iter()
                             .any(|&i| config.app_rules[i].format != format);
-                        row(ui, 38.0, |ui| {
+                        row_selected(ui, 31.0, self.selected_app == name, |ui| {
                             badge(ui, &name);
                             let label = display_name(&name);
                             if app_name(ui, label, self.selected_app == name)
@@ -226,8 +228,9 @@ impl SettingsState {
                             }
                         });
                     }
-                });
-            row(ui, 38.0, |ui| {
+                }
+            }
+            row_selected(ui, 31.0, self.selected_app == "其他 App", |ui| {
                 badge(ui, "?");
                 if app_name(ui, "其他 App", self.selected_app == "其他 App").clicked() {
                     self.selected_app = "其他 App".into();
@@ -261,80 +264,47 @@ impl SettingsState {
                 }
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         section(ui, "中文序号风格");
-        egui::Frame::new()
-            .fill(Color32::from_rgb(240, 240, 243))
-            .corner_radius(7.0)
-            .inner_margin(2.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    for (style, label) in [
-                        (NumberingStyle::Chinese, "一、（一）1.（1）"),
-                        (NumberingStyle::ChineseCompact, "一、1. (1)"),
-                        (NumberingStyle::Decimal, "1. 1.1 1.1.1"),
-                    ] {
-                        if ui
-                            .add_sized(
-                                [126.0, 26.0],
-                                egui::Button::new(RichText::new(label).size(12.0))
-                                    .selected(config.numbering_style == style),
-                            )
-                            .clicked()
-                            && config.numbering_style != style
-                        {
-                            config.numbering_style = style;
-                            changed = true;
-                        }
-                    }
-                });
-            });
-        ui.add_space(12.0);
+        changed |= segmented(
+            ui,
+            "numbering_style",
+            &[
+                (NumberingStyle::Chinese, "一、（一）1.（1）"),
+                (NumberingStyle::ChineseCompact, "一、1. (1)"),
+                (NumberingStyle::Decimal, "1. 1.1 1.1.1"),
+            ],
+            &mut config.numbering_style,
+            ui.available_width(),
+        );
+        ui.add_space(8.0);
         section(ui, "二级格式菜单（勾选显示 · 拖动排序）");
         let mut movement = None;
         let mut hover_target = None;
-        let count = config.secondary_items.len();
         let mut shortcut = 2;
         card(ui, |ui| {
             for (index, item) in config.secondary_items.iter_mut().enumerate() {
-                row(ui, 38.0, |ui| {
+                row(ui, 31.0, |ui| {
                     let grip = ui
                         .add(
                             egui::Label::new(RichText::new("⋮⋮").color(MUTED))
                                 .sense(egui::Sense::drag()),
                         )
-                        .on_hover_text("拖动以调整顺序；也可使用右侧上移、下移按钮");
+                        .on_hover_text("拖动以调整顺序");
                     if grip.drag_started() {
                         self.dragging = Some(index);
                     }
-                    changed |= ui.checkbox(&mut item.enabled, "").changed();
-                    ui.add_sized(
-                        [150.0, 22.0],
-                        egui::Label::new(RichText::new(format_name(item.format)).size(12.0))
-                            .halign(egui::Align::Min)
+                    changed |= check(ui, &mut item.enabled, format_name(item.format)).changed();
+                    ui.add(
+                        egui::Label::new(RichText::new(format_name(item.format)).size(13.0))
                             .truncate(),
                     );
-                    if item.enabled {
-                        ui.label(RichText::new(shortcut.to_string()).color(MUTED).monospace());
-                        shortcut += 1;
-                    } else {
-                        ui.label("  ");
-                    }
-                    if ui
-                        .add_enabled(index > 0, egui::Button::new("↑").small())
-                        .on_hover_text("上移格式")
-                        .clicked()
-                    {
-                        movement = Some((index, index - 1));
-                    }
-                    if ui
-                        .add_enabled(index + 1 < count, egui::Button::new("↓").small())
-                        .on_hover_text("下移格式")
-                        .clicked()
-                    {
-                        movement = Some((index, index + 1));
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if item.enabled {
+                            key_cap(ui, &shortcut.to_string());
+                            shortcut += 1;
+                        }
+                    });
                     if self.dragging.is_some() && ui.rect_contains_pointer(ui.max_rect()) {
                         hover_target = Some(index);
                         ui.painter().hline(
@@ -354,7 +324,7 @@ impl SettingsState {
         if let Some((from, to)) = movement {
             changed |= reorder(&mut config.secondary_items, from, to);
         }
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         section(ui, "快捷键（点击后按下新的组合键）");
         for (target, label, hotkey) in [
             (HotkeyTarget::Paste, "智能粘贴", &config.hotkey),
@@ -372,7 +342,17 @@ impl SettingsState {
                 } else {
                     hotkey_labels(hotkey).join(" + ")
                 };
-                if ui.button(text).clicked() {
+                let button = egui::Button::new(RichText::new(text).size(12.0))
+                    .fill(Color32::from_rgb(247, 247, 248))
+                    .stroke(Stroke::new(1.0_f32, LINE))
+                    .corner_radius(5.0);
+                if ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(button)
+                    })
+                    .inner
+                    .clicked()
+                {
                     self.recording = Some(target);
                     self.hotkey_error = None;
                 }
@@ -381,38 +361,56 @@ impl SettingsState {
         if let Some(error) = &self.hotkey_error {
             ui.colored_label(Color32::DARK_RED, error);
         }
-        ui.label(RichText::new("首次使用：复制文本后按智能粘贴快捷键，按目标 App 规则粘贴；完整菜单快捷键始终直接打开菜单，不先粘贴。也可从托盘打开菜单。").size(11.0).color(MUTED));
-        changed |= ui
-            .checkbox(
-                &mut config.silent_mode,
-                "静默模式 · 按目标 App 规则直接粘贴",
+        ui.label(
+            RichText::new(
+                "首次使用：复制后按智能粘贴快捷键；完整菜单快捷键直接打开菜单（托盘也可打开）。",
             )
-            .on_hover_text("关闭后先显示格式菜单；其他 App 的兜底规则仍然生效")
-            .changed();
+            .size(11.0)
+            .color(MUTED),
+        );
+        ui.horizontal(|ui| {
+            let label = "静默模式 · 按目标 App 规则直接粘贴";
+            changed |= check(ui, &mut config.silent_mode, label)
+                .on_hover_text("关闭后先显示格式菜单；其他 App 的兜底规则仍然生效")
+                .changed();
+            ui.label(label);
+        });
         changed
     }
 
     fn preview_ui(&mut self, parent: &mut egui::Ui, rect: egui::Rect, config: &mut Config) -> bool {
         let mut changed = false;
-        let header = egui::Rect::from_min_size(rect.min, Vec2::new(680.0, 44.0));
+        let header = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), 44.0));
         let mut ui = parent.new_child(
             egui::UiBuilder::new()
                 .id_salt("preview_header")
                 .max_rect(header.shrink2(Vec2::new(20.0, 8.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        ui.label(RichText::new("实时预览").strong());
+        ui.label(RichText::new("实时预览"));
         ui.label(RichText::new("·").color(MUTED));
         ui.label(RichText::new(format!("当前：{}", display_name(&self.selected_app))).color(SUB));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (format, label) in [
-                (Format::Markdown, "Markdown"),
-                (Format::WordRichText, "Word"),
-                (Format::ChineseNumbered, "纯文本"),
-            ] {
-                if ui.selectable_label(self.preview == format, label).clicked() {
-                    self.preview = format;
-                }
+            // Other formats (去符号 / HTML) are reached by selecting an App row.
+            let mut tab = match self.preview {
+                Format::WordRichText => Format::WordRichText,
+                Format::Markdown => Format::Markdown,
+                _ => Format::ChineseNumbered,
+            };
+            let before = tab;
+            segmented(
+                ui,
+                "preview_format",
+                &[
+                    (Format::ChineseNumbered, "纯文本"),
+                    (Format::WordRichText, "Word"),
+                    (Format::Markdown, "Markdown"),
+                ],
+                &mut tab,
+                220.0,
+            );
+            if tab != before {
+                self.preview = tab;
             }
         });
         parent.painter().hline(
@@ -421,11 +419,15 @@ impl SettingsState {
             Stroke::new(1.0_f32, LINE),
         );
         let pane_height = rect.height() - 80.0;
+        let pane_width = (rect.width() / 2.0).floor();
         let source = egui::Rect::from_min_size(
             rect.min + Vec2::new(0.0, 44.0),
-            Vec2::new(340.0, pane_height),
+            Vec2::new(pane_width, pane_height),
         );
-        let output = source.translate(Vec2::new(340.0, 0.0));
+        let output = egui::Rect::from_min_max(
+            egui::pos2(source.right(), source.top()),
+            egui::pos2(rect.right(), source.bottom()),
+        );
         parent.painter().rect_filled(output, 0.0, Color32::WHITE);
         parent
             .painter()
@@ -443,7 +445,7 @@ impl SettingsState {
                     egui::TextEdit::multiline(&mut self.markdown)
                         .font(FontId::monospace(12.0))
                         .frame(false)
-                        .desired_width(300.0)
+                        .desired_width(pane_width - 40.0)
                         .desired_rows(26),
                 );
             });
@@ -456,21 +458,11 @@ impl SettingsState {
         egui::ScrollArea::both()
             .id_salt("rendered_preview")
             .show(&mut output_ui, |ui| {
-                ui.set_min_width(298.0);
+                ui.set_min_width(output.width() - 42.0);
                 match self.preview {
                     Format::WordRichText => rich_preview(ui, &render_word_html(&self.markdown)),
                     Format::ChineseNumbered => {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(render_numbered(
-                                    &self.markdown,
-                                    config.numbering_style,
-                                ))
-                                .size(13.0)
-                                .line_height(Some(24.0)),
-                            )
-                            .wrap(),
-                        );
+                        indented_text(ui, &render_numbered(&self.markdown, config.numbering_style));
                     }
                     Format::PlainStripped => {
                         ui.add(
@@ -506,7 +498,7 @@ impl SettingsState {
             });
         let footer = egui::Rect::from_min_size(
             egui::pos2(rect.left(), rect.bottom() - 36.0),
-            Vec2::new(680.0, 36.0),
+            Vec2::new(rect.width(), 36.0),
         );
         parent
             .painter()
@@ -632,7 +624,145 @@ impl SettingsState {
 }
 
 fn section(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(11.0).strong().color(MUTED));
+    // Weight 500 is not available from the installed CJK faces; never bold.
+    ui.label(RichText::new(text).size(11.0).color(MUTED));
+}
+
+/// Window width the settings layout is designed for (default 960×680).
+pub const DEFAULT_SIZE: Vec2 = Vec2::new(960.0, 680.0);
+const MIN_WIDTH: f32 = 860.0;
+const LEFT_WIDTH: f32 = 400.0;
+const SEG_TRACK: Color32 = Color32::from_rgb(240, 240, 243);
+
+/// macOS-style segmented control: light gray track, white sliding thumb
+/// with a soft shadow, no accent fill.
+fn segmented<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: &str,
+    options: &[(T, &str)],
+    value: &mut T,
+    width: f32,
+) -> bool {
+    let (track, _) = ui.allocate_exact_size(Vec2::new(width, 28.0), egui::Sense::hover());
+    ui.painter().rect_filled(track, 7.0, SEG_TRACK);
+    let inner = track.shrink(2.0);
+    let cell = inner.width() / options.len() as f32;
+    let selected = options.iter().position(|(v, _)| v == value).unwrap_or(0);
+    let x = ui.ctx().animate_value_with_time(
+        egui::Id::new(("segmented_thumb", id)),
+        selected as f32 * cell,
+        0.12,
+    );
+    let thumb = egui::Rect::from_min_size(
+        inner.min + Vec2::new(x, 0.0),
+        Vec2::new(cell, inner.height()),
+    );
+    ui.painter().add(
+        egui::Shadow {
+            offset: [0, 1],
+            blur: 2,
+            spread: 0,
+            color: Color32::from_black_alpha(26),
+        }
+        .as_shape(thumb, 5.0),
+    );
+    ui.painter().rect_filled(thumb, 5.0, Color32::WHITE);
+    let mut changed = false;
+    for (index, (option, label)) in options.iter().enumerate() {
+        let rect = egui::Rect::from_min_size(
+            inner.min + Vec2::new(index as f32 * cell, 0.0),
+            Vec2::new(cell, inner.height()),
+        );
+        let on = index == selected;
+        let response = ui.interact(
+            rect,
+            egui::Id::new(("segmented", id, index)),
+            egui::Sense::click(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, *label)
+        });
+        ui.painter().with_clip_rect(rect).text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            *label,
+            FontId::proportional(12.0),
+            if on { TEXT } else { SUB },
+        );
+        if response.clicked() && !on {
+            *value = *option;
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Checkbox matching the mockup `.cb`: 15px, radius 4, accent fill + white tick.
+fn check(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(15.0), egui::Sense::click());
+    if response.clicked() {
+        *value = !*value;
+        response.mark_changed();
+    }
+    let on = *value;
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
+    if on {
+        ui.painter().rect_filled(rect, 4.0, ACCENT);
+        let p = |x: f32, y: f32| rect.min + Vec2::new(x, y);
+        ui.painter().line(
+            vec![p(4.0, 7.8), p(6.6, 10.4), p(11.2, 5.0)],
+            Stroke::new(1.6_f32, Color32::WHITE),
+        );
+    } else {
+        ui.painter().rect(
+            rect,
+            4.0,
+            Color32::WHITE,
+            Stroke::new(1.0_f32, Color32::from_rgb(199, 199, 204)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response
+}
+
+/// Key cap like the mockup `.kbd span`.
+fn key_cap(ui: &mut egui::Ui, text: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        4.0,
+        Color32::from_rgb(247, 247, 248),
+        Stroke::new(1.0_f32, LINE),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        FontId::proportional(11.0),
+        SUB,
+    );
+}
+
+/// Renders text whose leading spaces encode nesting as real left indentation.
+fn indented_text(ui: &mut egui::Ui, text: &str) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for line in text.lines() {
+        let trimmed = line.trim_start_matches(' ');
+        if trimmed.is_empty() {
+            ui.add_space(12.0);
+            continue;
+        }
+        let depth = line.len() - trimmed.len();
+        ui.horizontal_wrapped(|ui| {
+            // 2 leading spaces = 1em at 13px.
+            ui.add_space(depth as f32 * 6.5);
+            ui.add(
+                egui::Label::new(RichText::new(trimmed).size(13.0).line_height(Some(24.0))).wrap(),
+            );
+        });
+    }
 }
 fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
@@ -640,23 +770,20 @@ fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
         .stroke(Stroke::new(1.0_f32, LINE))
         .corner_radius(10.0)
         .show(ui, |ui| {
-            ui.set_width(390.0);
+            ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             contents(ui);
         });
 }
 fn app_name(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(147.0, 24.0), egui::Sense::click());
-    let visuals = ui.style().interact_selectable(&response, selected);
-    if selected || response.hovered() || response.has_focus() {
-        ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
-    }
+    // Selection is shown by the full-row tint in `row_selected`; text is unchanged.
     ui.painter().with_clip_rect(rect).text(
         rect.left_center() + Vec2::new(4.0, 0.0),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(12.0),
-        visuals.text_color(),
+        egui::FontId::proportional(13.0),
+        TEXT,
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, label)
@@ -665,10 +792,28 @@ fn app_name(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
 }
 
 fn row(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui)) {
+    row_selected(ui, height, false, contents);
+}
+/// Accent at 8% alpha behind the whole selected row.
+const ROW_SELECTED: Color32 = Color32::from_rgba_premultiplied(
+    (0x5B as u32 * 20 / 255) as u8,
+    (0x5B as u32 * 20 / 255) as u8,
+    (0xD6 as u32 * 20 / 255) as u8,
+    20,
+);
+fn row_selected(
+    ui: &mut egui::Ui,
+    height: f32,
+    selected: bool,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), height),
         egui::Sense::hover(),
     );
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, ROW_SELECTED);
+    }
     ui.painter()
         .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0_f32, LINE));
     let mut child = ui.new_child(
@@ -1306,10 +1451,7 @@ mod tests {
             state.preview = format;
             let output = ctx.run(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        Vec2::new(1120.0, 720.0),
-                    )),
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, DEFAULT_SIZE)),
                     ..Default::default()
                 },
                 |ctx| assert!(!state.show(ctx, &mut config)),

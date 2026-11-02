@@ -75,13 +75,9 @@ impl MenuState {
                         grouped(model.source_chars)
                     )
                 };
-                // `.chip`: "剪贴板" in --sub, then the summary in <b> (--text).
-                let bold = crate::ui::fonts::bold_family();
-                let strong = if ui.ctx().fonts(|f| f.families().contains(&bold)) {
-                    FontId::new(12.0, bold)
-                } else {
-                    FontId::proportional(12.0)
-                };
+                // `.chip`: "剪贴板" in --sub, then the summary in --text.
+                // Product rule: regular weight only, no bold UI text.
+                let strong = FontId::proportional(12.0);
                 let mut job = egui::text::LayoutJob::default();
                 job.append(
                     "剪贴板  ",

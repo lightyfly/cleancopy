@@ -8,12 +8,7 @@ pub fn bold_family() -> egui::FontFamily {
 }
 
 pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-        PathBuf::from("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"),
-        PathBuf::from("/System/Library/Fonts/PingFang.ttc"),
-        PathBuf::from("C:/Windows/Fonts/msyh.ttc"),
-    ];
+    let mut candidates = cjk_priority();
     discover(Path::new("/usr/share/fonts"), &mut candidates);
     discover(Path::new("/System/Library/Fonts"), &mut candidates);
     discover(Path::new("/Library/Fonts"), &mut candidates);
@@ -85,10 +80,9 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        fonts.font_data.insert(
-            "system-cjk".into(),
-            egui::FontData::from_owned(bytes).into(),
-        );
+        let mut data = egui::FontData::from_owned(bytes);
+        data.index = ttc_face_index(&path);
+        fonts.font_data.insert("system-cjk".into(), data.into());
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
                 .families
@@ -106,6 +100,29 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
         eprintln!("No system CJK font found; using egui fallback fonts");
     }
     loaded_cjk
+}
+
+/// CJK regular-weight font priority: PingFang SC, then Microsoft YaHei UI,
+/// then Noto Sans CJK Regular (Linux). Missing paths are skipped at load time.
+pub(crate) fn cjk_priority() -> Vec<PathBuf> {
+    let pingfang = PathBuf::from("/System/Library/Fonts/PingFang.ttc");
+    let yahei = PathBuf::from("C:/Windows/Fonts/msyh.ttc");
+    let noto = [
+        PathBuf::from("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        PathBuf::from("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"),
+    ];
+    let mut out = vec![pingfang, yahei];
+    out.extend(noto);
+    out
+}
+
+/// Face inside a collection: msyh.ttc face 1 is "Microsoft YaHei UI";
+/// PingFang.ttc and NotoSansCJK-Regular.ttc face 0 are PingFang SC / Noto Sans CJK SC.
+fn ttc_face_index(path: &Path) -> u32 {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) if name.eq_ignore_ascii_case("msyh.ttc") => 1,
+        _ => 0,
+    }
 }
 
 fn is_bold(path: &Path) -> bool {

@@ -172,7 +172,7 @@ impl DesktopApp {
             }),
             menus::TrayAction::Settings => {
                 self.view = View::Settings;
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1120.0, 720.0)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(settings::DEFAULT_SIZE));
             }
             menus::TrayAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
@@ -402,7 +402,7 @@ mod tests {
             (
                 menus::TrayAction::Settings,
                 View::Settings,
-                egui::vec2(1120.0, 720.0),
+                settings::DEFAULT_SIZE,
             ),
         ] {
             let ctx = egui::Context::default();

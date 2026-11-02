@@ -1,6 +1,6 @@
-//! First-run onboarding: a 480×360 three-step card in the settings style.
-//! 1. How CleanCopy is used (copy → paste hotkey), 2. permissions,
-//! 3. try it in a text box. Finishing or skipping persists
+//! First-run onboarding: a 480×360 three-step card in the settings style:
+//! how CleanCopy is used (copy → paste hotkey), permissions, and a try-it
+//! text box. Finishing or skipping persists
 //! `Config::onboarding_done`; the tray item 「使用引导…」 reopens it.
 use super::palette::{ACCENT, MUTED, SUB, TEXT};
 use super::settings::{hotkey_labels, recorded_hotkey, same_hotkey};
@@ -534,8 +534,10 @@ mod tests {
     fn legacy_config_without_flag_shows_onboarding_and_flag_round_trips() {
         let legacy: Config = toml::from_str("hotkey = 'Ctrl+Shift+V'").unwrap();
         assert!(!legacy.onboarding_done);
-        let mut done = Config::default();
-        done.onboarding_done = true;
+        let done = Config {
+            onboarding_done: true,
+            ..Default::default()
+        };
         let back: Config = toml::from_str(&toml::to_string(&done).unwrap()).unwrap();
         assert!(back.onboarding_done);
     }

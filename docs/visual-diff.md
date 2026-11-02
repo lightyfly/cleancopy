@@ -63,3 +63,22 @@ Menu window captures 640×360: `e2e-secondary.png`, `e2e-remember-checked.png`,
 `e2e-full.png`, `e2e-undo.png`, `e2e-nonsilent-1.png`, `e2e-nonsilent-2.png`,
 `e2e-background-before.png`, `e2e-background-progress.png`.
 Root captures 1280×800: `e2e-preview.png`, `e2e-settings.png`, `e2e-tray.png`.
+
+## Palette (PM option A) and onboarding
+
+Body text is now #2B2B33; secondary SUB (98,98,106) and MUTED (106,106,114).
+`ui::palette::tests::text_colours_meet_wcag_aa_on_every_background` asserts
+≥ 4.5:1 on every background (printed with `--nocapture`):
+
+| colour | white | pane #FAFAFB | key cap #F7F7F8 | track #F0F0F3 | selected row | tray #EDEDF2 |
+|---|---|---|---|---|---|---|
+| TEXT #2B2B33 | 14.04 | 13.46 | 13.11 | 12.34 | 12.41 | 12.03 |
+| SUB (98,98,106) | 6.04 | 5.79 | 5.65 | 5.31 | 5.34 | 5.18 |
+| MUTED (106,106,114) | 5.36 | 5.14 | 5.01 | 4.71 | 4.74 | 4.59 |
+
+White on ACCENT: 5.37. Note: the previous SUB (110,110,115) failed AA on the track/tray
+(4.46/4.35) and the previous MUTED (161,161,166) was ~2.2–2.6, so meeting AA meant
+secondary text got *darker*, not lighter; only body text got lighter.
+
+Onboarding (docs/screenshots/onboarding-1..3.png): no HTML mockup exists. design.md §1.1
+describes step 3 as "choose numbering style"; per PM spec step 3 is "try it" instead.

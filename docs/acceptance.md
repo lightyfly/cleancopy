@@ -115,3 +115,8 @@ See [desktop-verification.md](desktop-verification.md) for runtime method and
 adjacent probes, [compat.md](compat.md) for compatibility scope, and
 [distribution.md](distribution.md) for native build instructions (not executed
 as part of this change).
+
+## Onboarding
+- First launch (config without `onboarding_done`) → daemon spawns `--onboarding`; 完成/跳过 persist the flag; tray 「使用引导…」 reopens it. e2e: `PASS onboarding: …`.
+- Step 3 hotkey inside the input inserts the formatted sample (unit test `hotkey_paste_formats_but_plain_paste_stays_raw`; e2e capture onboarding-3.png).
+- macOS Accessibility (AXIsProcessTrusted / prompt) is cross-compile checked only (aarch64-apple-darwin clippy), never run.

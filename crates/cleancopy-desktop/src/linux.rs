@@ -47,6 +47,7 @@ pub struct LinuxPlatform {
     menu: Option<MenuModel>,
     verified_window: Option<Window>,
     last_write: Option<(NativeSnapshot, Snapshot)>,
+    pending_read: Option<std::sync::mpsc::Receiver<std::result::Result<NativeSnapshot, String>>>,
     epoch: u64,
     started: Instant,
     pub notice: Option<String>,
@@ -110,6 +111,7 @@ impl LinuxPlatform {
             menu: None,
             verified_window: None,
             last_write: None,
+            pending_read: None,
             epoch: unix_ms(),
             started: Instant::now(),
             notice: None,
@@ -432,6 +434,32 @@ impl Platform for LinuxPlatform {
         }
         Ok(encode_snapshot(&native))
     }
+    fn begin_clipboard_read(&mut self) -> bool {
+        // Each read uses its own X11 connection, so it can run on a worker.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = NativeClipboard::new()
+                .and_then(|clipboard| clipboard.read_snapshot())
+                .map_err(|e| e.to_string());
+            let _ = sender.send(result);
+        });
+        self.pending_read = Some(receiver);
+        true
+    }
+    fn poll_clipboard_read(&mut self) -> Option<Result<Snapshot>> {
+        let result = match self.pending_read.as_ref()?.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("clipboard reader stopped".to_owned())
+            }
+        };
+        self.pending_read = None;
+        Some(result.map_err(err).map(|native| match &self.last_write {
+            Some((last, snapshot)) if *last == native => snapshot.clone(),
+            _ => encode_snapshot(&native),
+        }))
+    }
     fn write_clipboard(&mut self, snapshot: Snapshot) -> Result<()> {
         let native = decode_snapshot(&snapshot)?;
         self.clipboard.write_snapshot(&native).map_err(err)?;
@@ -445,6 +473,9 @@ impl Platform for LinuxPlatform {
         self.inject(0x7a)
     }
     fn show_menu(&mut self, model: MenuModel) -> Result<()> {
+        if !model.loading && self.menu.as_ref().is_some_and(|m| m.loading) {
+            eprintln!("CleanCopy menu metadata ready");
+        }
         if self.menu.is_none() {
             for symbol in (0x31..=0x39).chain([0xff0d, 0xff1b]) {
                 let key = self.key(symbol)?;

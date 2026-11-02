@@ -66,11 +66,15 @@ impl MenuState {
                     Vec2::new(main.width() - 32.0, 30.0),
                 );
                 // Content restrictions take priority over decorative target tags.
-                let summary_text = format!(
-                    "{} · {} 字",
-                    model.content_label,
-                    grouped(model.source_chars)
-                );
+                let summary_text = if model.loading {
+                    model.content_label.clone()
+                } else {
+                    format!(
+                        "{} · {} 字",
+                        model.content_label,
+                        grouped(model.source_chars)
+                    )
+                };
                 let galley =
                     ui.painter()
                         .layout_no_wrap(summary_text, FontId::proportional(12.0), SUB);
@@ -316,7 +320,7 @@ impl MenuState {
             });
             return;
         }
-        if model.converting {
+        if model.converting || model.loading {
             return;
         }
         for (key, digit) in [
@@ -816,6 +820,7 @@ mod tests {
             undo_enabled: false,
             show_remember: true,
             target_unrecognized: true,
+            loading: false,
             remember: false,
         };
         let mut state = MenuState {
@@ -938,6 +943,7 @@ mod tests {
             undo_enabled: true,
             show_remember: true,
             target_unrecognized: true,
+            loading: false,
             remember: false,
         }
     }

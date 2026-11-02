@@ -19,6 +19,14 @@ struct Mock {
     now: u64,
     pasted: Vec<Snapshot>,
     effects: Vec<&'static str>,
+    /// Background clipboard reads: None = unsupported (synchronous reads).
+    async_read: Option<AsyncRead>,
+}
+#[derive(Default)]
+struct AsyncRead {
+    started: usize,
+    in_flight: bool,
+    ready: bool,
 }
 impl Mock {
     fn check(&mut self, effect: &'static str) -> Result<(), &'static str> {
@@ -81,6 +89,22 @@ impl Platform for Mock {
         self.check("notify")?;
         self.notices.push(s.into());
         Ok(())
+    }
+    fn begin_clipboard_read(&mut self) -> bool {
+        let Some(read) = self.async_read.as_mut() else {
+            return false;
+        };
+        read.started += 1;
+        read.in_flight = true;
+        true
+    }
+    fn poll_clipboard_read(&mut self) -> Option<Result<Snapshot, Self::Error>> {
+        let read = self.async_read.as_mut()?;
+        if !(read.in_flight && read.ready) {
+            return None;
+        }
+        read.in_flight = false;
+        Some(Ok(self.clipboard.clone()))
     }
 }
 fn app(exe: &str) -> AppIdentity {
@@ -1405,4 +1429,120 @@ fn large_conversion_keeps_the_target_locked_at_hotkey_time() {
         progress.target_unrecognized,
         "badge changed during conversion"
     );
+}
+
+fn async_engine(exe: &str, text: &str, silent: bool) -> Engine<Mock> {
+    let config = Config {
+        silent_mode: silent,
+        ..Config::default()
+    };
+    Engine::new(
+        config,
+        Mock {
+            app: app(exe),
+            clipboard: Snapshot::text(text),
+            async_read: Some(AsyncRead::default()),
+            ..Default::default()
+        },
+    )
+}
+fn finish_read(e: &mut Engine<Mock>, t: u64) {
+    e.platform_mut().async_read.as_mut().unwrap().ready = true;
+    timer(e, t);
+}
+
+#[test]
+fn full_menu_appears_before_the_clipboard_is_read_then_fills_in() {
+    let big = format!("# T\n\n{}", "x".repeat(3 * 1024 * 1024));
+    let mut e = async_engine("xmessage", &big, true);
+    full(&mut e, 0);
+    // Shown immediately, without any synchronous clipboard read.
+    assert!(!e.platform().effects.contains(&"read"));
+    let loading = e.platform().menus[0].clone();
+    assert_eq!(loading.kind, MenuKind::Full);
+    assert!(loading.loading);
+    assert!(!loading.original_enabled);
+    assert!(loading.formats.iter().all(|f| !f.enabled));
+    assert_eq!(e.next_deadline(), Some(16));
+    // Nothing happens until the background read completes.
+    timer(&mut e, 16);
+    assert_eq!(e.platform().menus.len(), 1);
+    finish_read(&mut e, 32);
+    let filled = e.platform().menus.last().unwrap().clone();
+    assert_eq!(filled.kind, MenuKind::Full);
+    assert!(!filled.loading);
+    assert_eq!(filled.source_chars, big.chars().count());
+    assert_eq!(filled.app, loading.app);
+}
+
+#[test]
+fn unknown_app_secondary_menu_appears_first_and_fills_in() {
+    let mut e = async_engine("xmessage", "# Title\n\n- a\n", true);
+    hot(&mut e, 0);
+    let loading = e.platform().menus[0].clone();
+    assert_eq!(loading.kind, MenuKind::Secondary);
+    assert!(loading.loading && loading.target_unrecognized);
+    finish_read(&mut e, 16);
+    let filled = e.platform().menus.last().unwrap().clone();
+    assert_eq!(filled.kind, MenuKind::Secondary);
+    assert!(!filled.loading);
+    assert_eq!(filled.content_label, "Markdown");
+    assert_eq!(e.platform().pastes, 0);
+}
+
+#[test]
+fn unknown_app_plain_text_closes_the_loading_menu_and_pastes_original() {
+    let mut e = async_engine("xmessage", "just words", true);
+    hot(&mut e, 0);
+    assert!(e.platform().menus[0].loading);
+    finish_read(&mut e, 16);
+    assert_eq!(e.platform().menus.len(), 1, "no second menu for plain text");
+    assert!(e.platform().hides >= 1);
+    assert_eq!(e.platform().pastes, 1);
+    assert!(e.platform().writes.is_empty());
+}
+
+#[test]
+fn escape_during_loading_cancels_and_ignores_the_late_result() {
+    let mut e = async_engine("xmessage", "# T\n", true);
+    full(&mut e, 0);
+    let id = e.platform().menus[0].id;
+    e.handle(Event::MenuKey {
+        t: 1,
+        id,
+        key: MenuKey::Escape,
+    })
+    .unwrap();
+    assert!(e.platform().hides >= 1);
+    assert_eq!(e.next_deadline(), None);
+    finish_read(&mut e, 20);
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.platform().pastes, 0);
+    // Choices on the loading menu id are ignored too.
+    e.handle(Event::MenuChoice {
+        t: 21,
+        id,
+        choice: Choice::Original,
+    })
+    .unwrap();
+    assert_eq!(e.platform().pastes, 0);
+}
+
+#[test]
+fn hotkeys_are_ignored_while_the_clipboard_is_loading() {
+    let mut e = async_engine("xmessage", "# T\n", true);
+    full(&mut e, 0);
+    hot(&mut e, 1);
+    full(&mut e, 2);
+    assert_eq!(e.platform().async_read.as_ref().unwrap().started, 1);
+    assert_eq!(e.platform().menus.len(), 1);
+}
+
+#[test]
+fn recognized_app_silent_paste_never_shows_a_loading_menu() {
+    let mut e = async_engine("WINWORD.EXE", "# Title\n", true);
+    hot(&mut e, 0);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(e.platform().async_read.as_ref().unwrap().started, 0);
+    assert_eq!(e.platform().pastes, 1);
 }

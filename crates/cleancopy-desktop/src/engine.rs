@@ -88,6 +88,16 @@ pub trait Platform {
     fn show_menu(&mut self, model: MenuModel) -> Result<(), Self::Error>;
     fn hide_menu(&mut self) -> Result<(), Self::Error>;
     fn notify(&mut self, message: &str) -> Result<(), Self::Error>;
+    /// Start reading the clipboard off the UI thread so a menu can be shown
+    /// first. Returns false when unsupported; the engine then reads
+    /// synchronously with [`Platform::read_clipboard`].
+    fn begin_clipboard_read(&mut self) -> bool {
+        false
+    }
+    /// The result of [`Platform::begin_clipboard_read`], once available.
+    fn poll_clipboard_read(&mut self) -> Option<Result<Snapshot, Self::Error>> {
+        None
+    }
     /// Nondecreasing Unix milliseconds, shared with persisted pause/history values.
     fn now(&self) -> u64;
 }
@@ -132,6 +142,9 @@ pub struct MenuModel {
     /// Whether the target captured at hotkey time has no App→format rule.
     /// Fixed for the menu's lifetime (the badge never re-detects the target).
     pub target_unrecognized: bool,
+    /// Shown before the clipboard has been read; choices are disabled and the
+    /// summary shows `content_label` without a character count.
+    pub loading: bool,
     pub remember: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,6 +222,12 @@ struct Menu {
     capture: Capture,
     model: MenuModel,
 }
+/// A menu shown at hotkey time while the clipboard is read in the background.
+struct Pending {
+    app: AppIdentity,
+    full: bool,
+    model: MenuModel,
+}
 struct Conversion {
     capture: Capture,
     format: Format,
@@ -245,6 +264,7 @@ pub struct Engine<P: Platform> {
     restoring: Option<Restoration>,
     undo: Option<Undo>,
     conversion: Option<Conversion>,
+    pending: Option<Pending>,
     secure_input: Box<dyn SecureInput>,
 }
 impl<P: Platform> Engine<P> {
@@ -266,6 +286,7 @@ impl<P: Platform> Engine<P> {
             restoring: None,
             undo: None,
             conversion: None,
+            pending: None,
             secure_input: Box::new(secure_input),
         }
     }
@@ -287,9 +308,8 @@ impl<P: Platform> Engine<P> {
     }
     pub fn next_deadline(&self) -> Option<u64> {
         self.restoring.as_ref().map(|r| r.deadline).or_else(|| {
-            self.conversion
-                .as_ref()
-                .map(|_| self.now.saturating_add(CONVERSION_POLL_MS))
+            (self.conversion.is_some() || self.pending.is_some())
+                .then(|| self.now.saturating_add(CONVERSION_POLL_MS))
         })
     }
     /// Dispatch a native hotkey using the injected clock.
@@ -318,6 +338,13 @@ impl<P: Platform> Engine<P> {
         self.now = t;
         match event {
             Event::MenuKey { id, key, .. } => {
+                if self.pending.as_ref().is_some_and(|p| p.model.id == id) {
+                    return if key == MenuKey::Escape {
+                        self.cancel()
+                    } else {
+                        Ok(())
+                    };
+                }
                 if self
                     .conversion
                     .as_ref()
@@ -352,6 +379,7 @@ impl<P: Platform> Engine<P> {
                 if self.restoring.as_ref().is_some_and(|r| t >= r.deadline) {
                     return self.restore(t);
                 }
+                self.poll_pending(t)?;
                 self.poll_conversion(t)
             }
             Event::Cancel { .. } => self.cancel(),
@@ -414,6 +442,7 @@ impl<P: Platform> Engine<P> {
             Event::HotkeyPressed { .. } | Event::FullMenuHotkeyPressed { .. } => {
                 if self.restoring.is_some()
                     || self.conversion.is_some()
+                    || self.pending.is_some()
                     || self.menu.is_some()
                     || self.paused
                     || self.config.paused_until.is_some_and(|until| t < until)
@@ -424,18 +453,100 @@ impl<P: Platform> Engine<P> {
                     return Ok(());
                 }
                 let app = self.platform.frontmost_app()?;
+                let full = matches!(event, Event::FullMenuHotkeyPressed { .. })
+                    || !self.config.silent_mode;
+                // Any route that may show a menu shows it first and reads the
+                // clipboard in the background (large clipboards take long).
+                if (full || self.config.format_for(&app).is_none())
+                    && self.platform.begin_clipboard_read()
+                {
+                    return self.show_loading(app, full);
+                }
                 let original = self.platform.read_clipboard()?;
+                self.dispatch(app, original, full, false, t)
+            }
+        }
+    }
+    fn show_loading(&mut self, app: AppIdentity, full: bool) -> Result<(), P::Error> {
+        self.serial = self.serial.saturating_add(1);
+        let unrecognized = self.config.format_for(&app).is_none();
+        let model = MenuModel {
+            id: self.serial,
+            kind: if full {
+                MenuKind::Full
+            } else {
+                MenuKind::Secondary
+            },
+            app: app.clone(),
+            formats: self
+                .config
+                .secondary_items
+                .iter()
+                .filter(|item| item.enabled)
+                .enumerate()
+                .map(|(index, item)| FormatItem {
+                    format: item.format,
+                    shortcut: u8::try_from(index + 2).unwrap_or(u8::MAX),
+                    enabled: false,
+                    muted: false,
+                })
+                .collect(),
+            default_choice: Choice::Original,
+            content_label: "正在读取剪贴板…".into(),
+            source_chars: 0,
+            converting: false,
+            original_enabled: false,
+            undo_enabled: false,
+            // Keep the final layout so the window does not jump when filled.
+            show_remember: !full && unrecognized,
+            target_unrecognized: unrecognized,
+            loading: true,
+            remember: false,
+        };
+        self.platform.show_menu(model.clone())?;
+        self.pending = Some(Pending { app, full, model });
+        Ok(())
+    }
+    fn poll_pending(&mut self, t: u64) -> Result<(), P::Error> {
+        if self.pending.is_none() {
+            return Ok(());
+        }
+        let Some(result) = self.platform.poll_clipboard_read() else {
+            return Ok(());
+        };
+        let pending = self.pending.take().unwrap();
+        match result {
+            Ok(original) => self.dispatch(pending.app, original, pending.full, true, t),
+            Err(error) => {
+                let _ = self.platform.hide_menu();
+                let _ = self.platform.notify("Cannot read the clipboard");
+                Err(error)
+            }
+        }
+    }
+    fn dispatch(
+        &mut self,
+        app: AppIdentity,
+        original: Snapshot,
+        full: bool,
+        loading_shown: bool,
+        t: u64,
+    ) -> Result<(), P::Error> {
+        {
+            {
                 let convertible = original.source_text().is_some();
                 let markdown = convertible
-                    && (original.html_source() || original.source_text().is_some_and(is_markdown));
+                    && (original.html_source()
+                        || original
+                            .source_text()
+                            .is_some_and(|s| is_markdown(detect_prefix(s))));
                 let capture = Capture {
                     app,
                     original,
                     convertible,
                     markdown,
                 };
-                if matches!(event, Event::FullMenuHotkeyPressed { .. }) || !self.config.silent_mode
-                {
+                if full {
                     self.open_menu(capture, MenuKind::Full)
                 } else if !capture.markdown
                     && capture
@@ -443,9 +554,15 @@ impl<P: Platform> Engine<P> {
                         .source_bytes()
                         .is_some_and(|b| std::str::from_utf8(b).is_ok())
                 {
+                    if loading_shown {
+                        self.platform.hide_menu()?;
+                    }
                     self.paste(capture, None, false, t)
                 } else if let Some(format) = self.config.format_for(&capture.app) {
                     let format = capture.markdown.then_some(format);
+                    if loading_shown {
+                        self.platform.hide_menu()?;
+                    }
                     self.paste(capture, format, false, t)
                 } else {
                     self.open_menu(capture, MenuKind::Secondary)
@@ -454,7 +571,7 @@ impl<P: Platform> Engine<P> {
         }
     }
     fn cancel(&mut self) -> Result<(), P::Error> {
-        let converting = self.conversion.take().is_some();
+        let converting = self.conversion.take().is_some() | self.pending.take().is_some();
         if self.menu.take().is_some() || converting {
             // Invalidate callbacks even when the adapter fails to hide the menu.
             self.platform.hide_menu()?;
@@ -529,6 +646,7 @@ impl<P: Platform> Engine<P> {
                 .is_some_and(|u| same_target(&u.app, &capture.app)),
             show_remember: self.config.format_for(&capture.app).is_none(),
             target_unrecognized: self.config.format_for(&capture.app).is_none(),
+            loading: false,
             remember: false,
         };
         self.platform.show_menu(model.clone())?;
@@ -1036,4 +1154,20 @@ mod tests {
             assert!(engine.menu.is_some());
         }
     }
+}
+
+/// Markdown detection looks at a bounded prefix so huge clipboards do not
+/// delay the menu (full detection of 3 MB took ~0.7 s in debug builds).
+const DETECT_PREFIX_BYTES: usize = 256 * 1024;
+fn detect_prefix(text: &str) -> &str {
+    if text.len() <= DETECT_PREFIX_BYTES {
+        return text;
+    }
+    let mut end = DETECT_PREFIX_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // Cut at a line boundary so a partial line cannot look like syntax.
+    let cut = text[..end].rfind('\n').map_or(end, |i| i + 1);
+    &text[..cut]
 }

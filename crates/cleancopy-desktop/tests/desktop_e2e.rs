@@ -95,6 +95,28 @@ impl Harness {
             .data
     }
     fn open(&self, full_hotkey: bool, secondary: bool, shot: &str) -> u32 {
+        let ready_count = self.metadata_completions();
+        let id = self.open_measured(full_hotkey, secondary, shot, true).0;
+        if !secondary {
+            wait("asynchronous full menu metadata", || {
+                self.metadata_completions() > ready_count
+            });
+        }
+        id
+    }
+    fn metadata_completions(&self) -> usize {
+        fs::read_to_string(self.dir.path().join("daemon.log"))
+            .unwrap_or_default()
+            .matches("CleanCopy menu metadata ready")
+            .count()
+    }
+    fn open_measured(
+        &self,
+        full_hotkey: bool,
+        secondary: bool,
+        label: &str,
+        screenshot: bool,
+    ) -> (u32, Duration) {
         assert!(self.menu().is_none(), "timing requires a hidden menu");
         self.xdo(&["mousemove", "350", "200"]);
         let start = Instant::now();
@@ -123,7 +145,7 @@ impl Harness {
             "Ctrl+Shift+V→full-menu-visible"
         };
         println!(
-            "MEASURE {route} {shot}: {:.2} ms (native mapped window + expected painted panel)",
+            "MEASURE {route} {label}: {:.2} ms (native mapped window + expected painted panel)",
             elapsed.as_secs_f64() * 1000.0
         );
         if secondary {
@@ -132,8 +154,10 @@ impl Harness {
                 "unknown-app→secondary-visible exceeded 100 ms: {elapsed:?}"
             );
         }
-        self.shot(shot);
-        id
+        if screenshot {
+            self.shot(label);
+        }
+        (id, elapsed)
     }
     fn shot(&self, name: &str) {
         let path = self.root.join(format!("docs/screenshots/e2e-{name}.png"));
@@ -487,6 +511,21 @@ fn desktop_runtime_matrix() {
     });
     assert_eq!(h.read("text/html"), html_original);
     println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
+
+    for mib in [3, 5] {
+        let mut source = b"## Large clipboard\n\n".to_vec();
+        source.resize(mib * 1024 * 1024, b'x');
+        h.fixture(&source, &format!("full-{mib}mb"));
+        let (_, elapsed) = h.open_measured(true, false, &format!("{mib}MB"), false);
+        assert!(
+            elapsed <= Duration::from_millis(100),
+            "{mib}MB full menu exceeded 100 ms: {elapsed:?}"
+        );
+        // Escape during snapshot transfer must invalidate the pending completion.
+        h.close();
+        thread::sleep(Duration::from_millis(100));
+        assert!(h.menu().is_none(), "cancelled metadata reopened the menu");
+    }
 
     // More than 200 KiB takes the worker route; click the real 取消 button.
     // Many independent blocks keep conversion busy long enough to exercise cancellation.

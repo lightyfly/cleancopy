@@ -17,7 +17,51 @@ use x11rb::{
     CURRENT_TIME,
 };
 
-pub const NOTICE: &str = "CleanCopy 遇到问题，已暂停格式化";
+pub const NOTICE: &str = "CleanCopy 遇到问题，已暂停格式化。";
+/// Notification action key for 「重新启动」 (GNOME has no tray, report v6 D-2).
+const RESTART_ACTION: &str = "restart";
+/// Safe mode retries the daemon once on its own after this long.
+const AUTO_RETRY: Duration = Duration::from_secs(5 * 60);
+
+/// Runtime directory for the safe-mode marker and restart request.
+fn runtime_dir() -> std::path::PathBuf {
+    std::env::var_os("CLEANCOPY_RUNTIME_DIR")
+        .or_else(|| std::env::var_os("XDG_RUNTIME_DIR"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: getuid has no preconditions.
+            std::env::temp_dir().join(format!("cleancopy-{}", unsafe { libc::getuid() }))
+        })
+}
+fn marker_path() -> std::path::PathBuf {
+    runtime_dir().join("cleancopy-safe-mode.pid")
+}
+fn restart_path() -> std::path::PathBuf {
+    std::env::var_os("CLEANCOPY_SAFE_MODE_RESTART_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| runtime_dir().join("cleancopy-safe-mode.restart"))
+}
+
+/// Whether a safe-mode supervisor is running (its marker names a live pid).
+pub fn active() -> bool {
+    std::fs::read_to_string(marker_path())
+        .ok()
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        .is_some_and(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists())
+}
+
+/// Reopening Settings (or launching CleanCopy again) while safe mode is
+/// active asks it to restart the daemon. Returns whether a request was made.
+pub fn request_restart() -> bool {
+    if !active() {
+        return false;
+    }
+    let path = restart_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, b"restart").is_ok()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafeExit {
@@ -79,7 +123,20 @@ impl ksni::Tray for SafeTray {
     }
 }
 
-/// Desktop notification over org.freedesktop.Notifications.
+/// Body text of the safe-mode notification.
+fn body(crashes: usize, auto_retry: bool) -> String {
+    let retry = if auto_retry {
+        "；5 分钟后会自动重试一次"
+    } else {
+        ""
+    };
+    format!(
+        "连续崩溃 {crashes} 次。快捷键暂时粘贴原文。点「重新启动」或重新打开设置即可恢复{retry}。"
+    )
+}
+
+/// Desktop notification over org.freedesktop.Notifications with a
+/// 「重新启动」 action button.
 fn notify(summary: &str, body: &str) -> std::result::Result<u32, String> {
     use std::collections::HashMap;
     let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
@@ -97,13 +154,42 @@ fn notify(summary: &str, body: &str) -> std::result::Result<u32, String> {
                 "dialog-warning",
                 summary,
                 body,
-                Vec::<&str>::new(),
+                vec![RESTART_ACTION, "重新启动"],
                 hints,
                 -1i32,
             ),
         )
         .map_err(|e| e.to_string())?;
     reply.body().deserialize::<u32>().map_err(|e| e.to_string())
+}
+
+/// Forward the notification's 「重新启动」 action to `sender`.
+fn listen_for_action(id: u32, sender: mpsc::Sender<SafeExit>) {
+    std::thread::spawn(move || {
+        let Ok(conn) = zbus::blocking::Connection::session() else {
+            return;
+        };
+        let Ok(proxy) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        ) else {
+            return;
+        };
+        let Ok(signals) = proxy.receive_signal("ActionInvoked") else {
+            return;
+        };
+        for message in signals {
+            if let Ok((nid, action)) = message.body().deserialize::<(u32, String)>() {
+                if nid == id && action == RESTART_ACTION {
+                    eprintln!("CleanCopy safe mode: notification action 重新启动");
+                    let _ = sender.send(SafeExit::Restart);
+                    return;
+                }
+            }
+        }
+    });
 }
 
 struct Passthrough {
@@ -224,16 +310,19 @@ impl Drop for Passthrough {
     }
 }
 
-/// Run until the user picks 「重新启动」 or 「退出」 from the tray.
-pub fn run(config: &Config, crashes: usize) -> Result<SafeExit> {
+/// Run until the user picks 「重新启动」 (notification action or tray),
+/// reopens Settings, or 「退出」; with `auto_retry`, also restart after 5 minutes.
+pub fn run(config: &Config, crashes: usize, auto_retry: bool) -> Result<SafeExit> {
     use ksni::blocking::TrayMethods;
     eprintln!("CleanCopy safe mode: {NOTICE}");
-    let body = format!("连续崩溃 {crashes} 次。快捷键暂时粘贴原文；可在托盘菜单「重新启动」。");
-    match notify(NOTICE, &body) {
-        Ok(id) => eprintln!("CleanCopy safe mode: notification {id} shown"),
+    let (sender, exits) = mpsc::channel();
+    match notify(NOTICE, &body(crashes, auto_retry)) {
+        Ok(id) => {
+            eprintln!("CleanCopy safe mode: notification {id} shown");
+            listen_for_action(id, sender.clone());
+        }
         Err(error) => eprintln!("CleanCopy safe mode: notification failed: {error}"),
     }
-    let (sender, exits) = mpsc::channel();
     let tray = match (SafeTray { sender }).assume_sni_available(true).spawn() {
         Ok(handle) => Some(handle),
         Err(error) => {
@@ -242,10 +331,15 @@ pub fn run(config: &Config, crashes: usize) -> Result<SafeExit> {
         }
     };
     let shutdown = |tray: Option<ksni::blocking::Handle<SafeTray>>| {
+        let _ = std::fs::remove_file(marker_path());
         if let Some(tray) = tray {
             tray.shutdown().wait();
         }
     };
+    let restart_file = restart_path();
+    let _ = std::fs::remove_file(&restart_file);
+    let _ = std::fs::create_dir_all(runtime_dir());
+    let _ = std::fs::write(marker_path(), std::process::id().to_string());
     let passthrough = match Passthrough::new(config) {
         Ok(p) => p,
         Err(error) => {
@@ -257,8 +351,11 @@ pub fn run(config: &Config, crashes: usize) -> Result<SafeExit> {
         "CleanCopy safe mode: hotkey passthrough ready ({} grabs)",
         passthrough.grabbed.len()
     );
-    // Test hook: a file whose presence requests a restart (no tray host in CI).
-    let restart_file = std::env::var_os("CLEANCOPY_SAFE_MODE_RESTART_FILE");
+    let retry_after = std::env::var("CLEANCOPY_SAFE_MODE_RETRY_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(AUTO_RETRY, Duration::from_millis);
+    let started = std::time::Instant::now();
     let exit = loop {
         let presses = match passthrough.presses() {
             Ok(n) => n,
@@ -276,10 +373,13 @@ pub fn run(config: &Config, crashes: usize) -> Result<SafeExit> {
         if let Ok(exit) = exits.try_recv() {
             break exit;
         }
-        if let Some(path) = &restart_file {
-            if std::fs::remove_file(path).is_ok() {
-                break SafeExit::Restart;
-            }
+        if std::fs::remove_file(&restart_file).is_ok() {
+            eprintln!("CleanCopy safe mode: restart requested (Settings reopened)");
+            break SafeExit::Restart;
+        }
+        if auto_retry && started.elapsed() >= retry_after {
+            eprintln!("CleanCopy safe mode: automatic retry");
+            break SafeExit::Restart;
         }
         std::thread::sleep(Duration::from_millis(10));
     };
@@ -311,5 +411,28 @@ mod tests {
         assert!(labels.contains(&("重新启动".into(), true)));
         assert!(labels.contains(&("退出 CleanCopy".into(), true)));
         assert_eq!(exits.try_recv(), Ok(SafeExit::Restart));
+    }
+
+    #[test]
+    fn notification_text_and_restart_request() {
+        assert_eq!(NOTICE, "CleanCopy 遇到问题，已暂停格式化。");
+        assert!(!body(5, true).contains("托盘"));
+        assert!(body(5, true).contains("5 分钟后"));
+        assert!(!body(5, false).contains("5 分钟后"));
+        let dir = std::env::temp_dir().join(format!("cc-safe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("CLEANCOPY_RUNTIME_DIR", &dir);
+        std::env::remove_var("CLEANCOPY_SAFE_MODE_RESTART_FILE");
+        // No safe mode running: reopening Settings requests nothing.
+        assert!(!request_restart());
+        std::fs::write(marker_path(), std::process::id().to_string()).unwrap();
+        assert!(active());
+        assert!(request_restart());
+        assert!(restart_path().exists());
+        // A stale marker (dead pid) is ignored.
+        std::fs::remove_file(restart_path()).unwrap();
+        std::fs::write(marker_path(), "999999999").unwrap();
+        assert!(!request_restart());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

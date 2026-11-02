@@ -40,6 +40,8 @@ fn supervise() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut crashes: Vec<Instant> = Vec::new();
+    // Safe mode restarts the daemon by itself once (after 5 minutes).
+    let mut auto_retry = true;
     loop {
         let status = std::process::Command::new(&exe)
             .args(&args)
@@ -57,7 +59,8 @@ fn supervise() -> Result<(), Box<dyn std::error::Error>> {
             // plain paste, and let the tray restart the daemon.
             eprintln!("CleanCopy daemon crashed {MAX_CRASHES} times within 60 s; safe mode");
             let config = config_for(&args).unwrap_or_default();
-            match cleancopy_desktop::linux::safe_mode::run(&config, crashes.len())? {
+            let retry = std::mem::replace(&mut auto_retry, false);
+            match cleancopy_desktop::linux::safe_mode::run(&config, crashes.len(), retry)? {
                 cleancopy_desktop::linux::safe_mode::SafeExit::Restart => {
                     eprintln!("CleanCopy safe mode: restarting daemon");
                     crashes.clear();
@@ -100,6 +103,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Select X11 explicitly; Wayland support is not compiled in.
     #[cfg(all(unix, not(target_os = "macos")))]
     std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    // Reopening Settings (or launching CleanCopy again) while the supervisor
+    // is in safe mode restarts the daemon (report v6 D-2: no tray on GNOME).
+    #[cfg(target_os = "linux")]
+    if args.preview.is_none()
+        && !args.onboarding
+        && std::env::var_os(SUPERVISED_ENV).is_none()
+        && cleancopy_desktop::linux::safe_mode::request_restart()
+    {
+        eprintln!("CleanCopy: safe mode active; requested daemon restart");
+        if !args.settings {
+            return Ok(());
+        }
+    }
     #[cfg(target_os = "linux")]
     if args.preview.is_none() && !args.settings && !args.onboarding {
         if std::env::var_os(SUPERVISED_ENV).is_some() {

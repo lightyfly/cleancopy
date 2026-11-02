@@ -205,3 +205,58 @@ x86_64-pc-windows-msvc). `scripts/e2e-desktop.sh --update-screenshots`: exit 0, 
   (200/200) without a daemon, and 50/50 in each of 2 runs with the daemon
   paused/restoring around it. Plain Ctrl+V in the box still pastes raw text.
   Windows/macOS still use the egui path, so a single-frame press there is not fixed or verified.
+
+## Round v5-final (report-v5, 2026-11-02, UTC+8)
+
+Gates at the memory commit: build all targets, `cargo test --workspace` **248 passed,
+0 failed, 7 ignored**, fmt --check, clippy -D warnings.
+`scripts/e2e-desktop.sh --update-screenshots`: exit 0, 14 PASS lines; screenshots
+refreshed and inspected (only `e2e-background-progress.png` changed in bytes).
+
+- **M-1 list base:** the list base is global, one rung below the deepest heading
+  numbering scheme anywhere in the document. Ladder `1.` → `（1）` → `①` → `•`
+  (`a.` removed). Decimal H5 and below are not numbered: bold in rich output,
+  un-numbered in plain text. Tests include `list_base_is_global_to_the_deepest_heading_scheme`
+  (a list under H3 followed by H4) and the updated `numbered_levels` property.
+  The tester's adjacency checker reported 0 problems on all 12 outputs (4 cases × 3 styles).
+- **N-7 nbsp:** `&nbsp;`, `&#160;`, `&#xa0;` and U+00A0 survive HTML→Markdown,
+  one space each (`nbsp_runs_are_kept_one_space_each`).
+- **M-3 bullets:** Word/WPS HTML uses `list-style-type:none` with literal •/◦/▪
+  plus a nbsp, so bullets don't depend on the font. **Verified on the HTML output only, not in WPS.**
+- **M-4 try-it grab:** the onboarding try step grabs the hotkey only while one
+  of our windows has focus (`_NET_WM_PID` walk; PointerRoot falls back to the
+  pointer window). The grab is released as soon as focus is lost, with no 500 ms hold.
+  - Fast presses: 50/50 in each of 4 runs without the daemon and in each of 2 runs with it.
+  - Focus loss (3 runs): the daemon took the hotkey back in 150, 419 and 138 ms,
+    bounded by its ~250 ms marker poll. Pasting into the other app worked, and
+    after refocusing the box formatted 2/2.
+  - Esc on any onboarding step closes the window without marking onboarding done.
+- **C-1 supervisor:** after 5 worker crashes the supervisor (~5 MB RSS) enters safe mode:
+  - It sends a desktop notification 「CleanCopy 遇到问题，已暂停格式化」.
+  - The tray menu offers 重新启动 / 退出 CleanCopy.
+  - Both hotkeys paste the original clipboard text unchanged.
+  Measured under dbus-run-session with a mock notification server:
+  - The notification text matched exactly.
+  - 3/3 presses pasted the original Markdown verbatim.
+  - Tray 重新启动 started one new worker ("hotkey ready").
+- **Memory** (5 MB `v3-cancel5m.md`, release worker, the tester's method of
+  VmRSS/VmHWM of the worker process with one paste; supervisor 5.2 MB extra):
+
+  | choice | before peak | before steady | after peak | after steady (+3/+33/+93 s) |
+  |---|---|---|---|---|
+  | Word/WPS (key 3) | 994 MB | 296 MB | **378 MB** (378–381 over 4 runs) | **131 MB** |
+  | Markdown (key 1) | 222 MB | 135 MB | **209 MB** | **121 MB** |
+
+  The worker sits at 120 MB RSS idle (GL/LLVM/fonts) before any paste.
+  - **Chunked parsing:** inputs ≥ 1 MiB are parsed in ~64 KiB runs of whole top-level blocks.
+    Documents with reference/footnote definitions, raw HTML or indented fences
+    are still parsed whole, so they keep the old peak.
+  - **Identical output:** `tests/chunked.rs` shows chunked output is byte-identical
+    for every renderer, and it was also identical on the 5 MB file (79 chunks).
+  - **Steady-state fixes:**
+    - fixed glibc mmap threshold;
+    - Undo stores identical payloads once;
+    - the X11 owner shares identical target bytes;
+    - `last_write` keeps a fingerprint instead of a copy.
+  - **Trade-off:** the Word paste of the 5 MB file took 4.1–4.5 s, against 3.6–3.8 s before.
+- **M-2:** unchanged as instructed.

@@ -558,6 +558,7 @@ dependencies = [
  "eframe",
  "html2md",
  "ksni",
+ "libc",
  "png 0.17.16",
  "raw-window-handle",
  "serde",

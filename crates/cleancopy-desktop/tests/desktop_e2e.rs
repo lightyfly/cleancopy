@@ -469,7 +469,8 @@ fn desktop_runtime_matrix() {
     let mut c = Config::load(&config).unwrap();
     c.silent_mode = false;
     c.save(&config).unwrap();
-    thread::sleep(Duration::from_millis(600));
+    // An idle daemon re-reads its config once per second (IDLE_TICK).
+    thread::sleep(Duration::from_millis(1300));
     for i in 1..=2 {
         h.open(false, false, &format!("nonsilent-{i}"));
         h.close();
@@ -478,7 +479,7 @@ fn desktop_runtime_matrix() {
     c = Config::load(&config).unwrap();
     c.silent_mode = true;
     c.save(&config).unwrap();
-    thread::sleep(Duration::from_millis(600));
+    thread::sleep(Duration::from_millis(1300));
     let large = format!("## Heading\n\n{}\n", "x".repeat(9987));
     assert_eq!(large.chars().count(), 10000);
     h.fixture(large.as_bytes(), "large");

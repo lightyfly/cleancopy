@@ -539,8 +539,12 @@ impl LinuxDriver {
     pub fn dispatch(&mut self, event: Event) -> Result<()> {
         self.engine.handle(event)
     }
-    pub fn poll(&mut self) -> Result<()> {
-        for event in self.engine.platform_mut().poll_events()? {
+    /// Handles pending X events and due timers; returns how many X-derived
+    /// events were handled.
+    pub fn poll(&mut self) -> Result<usize> {
+        let events = self.engine.platform_mut().poll_events()?;
+        let handled = events.len();
+        for event in events {
             self.engine.handle(event)?;
         }
         if self
@@ -550,7 +554,7 @@ impl LinuxDriver {
         {
             self.engine.tick()?;
         }
-        Ok(())
+        Ok(handled)
     }
 }
 fn configured_hotkeys(config: &Config, keys: &[(u8, Vec<u32>)]) -> Result<Vec<(u8, u16, bool)>> {
@@ -727,15 +731,58 @@ fn decode_snapshot(snapshot: &Snapshot) -> Result<NativeSnapshot> {
     Ok(NativeSnapshot { targets })
 }
 
+type Waker = std::sync::Arc<std::sync::OnceLock<eframe::egui::Context>>;
+
+/// Idle repaint interval: config-file sync, pause expiry and child reaping.
+/// Everything else (X events, tray actions) wakes the loop explicitly, so a
+/// hidden daemon renders ~1 frame/s instead of a busy 8 ms loop (B-1).
+const IDLE_TICK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Blocks on the daemon's X11 socket and requests a repaint whenever events
+/// arrive (hotkeys, selection requests, property notifies).
+fn spawn_x11_waker(fd: std::os::fd::RawFd, ctx: eframe::egui::Context) {
+    std::thread::Builder::new()
+        .name("cleancopy-x11-waker".into())
+        .spawn(move || loop {
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: one valid pollfd for the lifetime of the call.
+            let ready = unsafe { libc::poll(&mut pfd, 1, -1) };
+            if ready < 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return;
+            }
+            if pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+                ctx.request_repaint();
+                return;
+            }
+            ctx.request_repaint();
+            // The UI thread drains the socket on its next frame; don't spin
+            // on the same readable bytes meanwhile.
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        })
+        .expect("spawn x11 waker");
+}
+
 /// D-Bus callbacks only enqueue actions; X11 and engine work stay on the UI thread.
 struct NativeTray {
     sender: std::sync::mpsc::Sender<crate::ui::menus::TrayAction>,
+    /// Wakes the (otherwise idle) UI loop so the action is handled at once.
+    waker: Waker,
     config: Config,
     enabled: bool,
 }
 impl NativeTray {
     fn send(&self, action: crate::ui::menus::TrayAction) {
         let _ = self.sender.send(action);
+        if let Some(ctx) = self.waker.get() {
+            ctx.request_repaint();
+        }
     }
 }
 impl ksni::Tray for NativeTray {
@@ -836,8 +883,10 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
     use ksni::blocking::TrayMethods;
     let enabled = config.paused_until.is_none_or(|until| until <= unix_ms());
     let (sender, actions) = std::sync::mpsc::channel();
+    let waker: Waker = Default::default();
     let tray = match (NativeTray {
         sender,
+        waker: waker.clone(),
         config: config.clone(),
         enabled,
     })
@@ -870,6 +919,14 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             crate::ui::fonts::install(&cc.egui_ctx);
             cc.egui_ctx.set_visuals(egui::Visuals::light());
+            let _ = waker.set(cc.egui_ctx.clone());
+            {
+                use std::os::fd::AsRawFd;
+                spawn_x11_waker(
+                    driver.engine.platform().conn.stream().as_raw_fd(),
+                    cc.egui_ctx.clone(),
+                );
+            }
             let window = match cc.window_handle()?.as_raw() {
                 RawWindowHandle::Xlib(h) => h.window as u32,
                 RawWindowHandle::Xcb(h) => h.window.get(),
@@ -908,6 +965,7 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 saved,
                 frames: 0,
                 last_sync: Instant::now(),
+                last_x_activity: Instant::now(),
             };
             if !app.driver.engine.config().onboarding_done {
                 // First launch: show onboarding; it persists the flag itself.
@@ -942,6 +1000,7 @@ struct LinuxApp {
     driver: LinuxDriver,
     tray: Option<ksni::blocking::Handle<NativeTray>>,
     actions: std::sync::mpsc::Receiver<crate::ui::menus::TrayAction>,
+    last_x_activity: Instant,
     enabled: bool,
     settings_child: Option<std::process::Child>,
     quitting: bool,
@@ -1042,8 +1101,12 @@ impl Drop for LinuxApp {
 impl eframe::App for LinuxApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _: &mut eframe::Frame) {
         use eframe::egui;
-        if let Err(error) = self.driver.poll() {
-            eprintln!("CleanCopy: {error}");
+        match self.driver.poll() {
+            // x11rb may buffer further events while answering requests in
+            // this frame, out of sight of the socket waker: poll again soon.
+            Ok(n) if n > 0 => self.last_x_activity = Instant::now(),
+            Ok(_) => {}
+            Err(error) => eprintln!("CleanCopy: {error}"),
         }
         while let Ok(action) = self.actions.try_recv() {
             if !self.quitting {
@@ -1165,7 +1228,21 @@ impl eframe::App for LinuxApp {
                 self.settings_child = None;
             }
         }
-        ctx.request_repaint_after(std::time::Duration::from_millis(8));
+        // Only animate/poll quickly while something is actually happening.
+        let busy = self.shown.is_some()
+            || self.driver.engine.next_deadline().is_some()
+            || self.quitting
+            || self.frames <= 6
+            || self.last_x_activity.elapsed() < std::time::Duration::from_millis(250)
+            || config_dirty;
+        ctx.request_repaint_after(if busy {
+            std::time::Duration::from_millis(8)
+        } else if self.settings_child.is_some() {
+            // Settings window open: pick up its config edits promptly.
+            std::time::Duration::from_millis(250)
+        } else {
+            IDLE_TICK
+        });
         // Native mapping is managed above, not through focus-affecting viewport commands.
         let _ = egui::ViewportId::ROOT;
     }

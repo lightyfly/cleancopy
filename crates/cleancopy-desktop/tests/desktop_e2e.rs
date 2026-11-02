@@ -488,7 +488,7 @@ fn desktop_runtime_matrix() {
     assert_eq!(h.read("text/html"), html_original);
     println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
 
-    // More than 200 KiB takes the worker route; cancel via the real Escape key.
+    // More than 200 KiB takes the worker route; click the real 取消 button.
     // Many independent blocks keep conversion busy long enough to exercise cancellation.
     let cancellable = format!(
         "## Background\n\n{}",
@@ -525,7 +525,7 @@ fn desktop_runtime_matrix() {
     );
     assert_eq!(h.read("UTF8_STRING").0, cancellable.as_bytes());
     println!(
-        "PASS S-01 real large conversion cancelled via Escape; no paste and clipboard unchanged"
+        "PASS S-01 real large conversion cancelled by clicking 取消; no paste and clipboard unchanged"
     );
 
     for (name, args) in [

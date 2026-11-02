@@ -1,0 +1,312 @@
+   Compiling cleancopy-desktop v0.1.0 (/workspace/cleancopy/crates/cleancopy-desktop)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.06s
+     Running unittests src/main.rs (target/debug/deps/cleancopy-427d21ceb498e4ca)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-66f662c6add86293)
+
+running 12 tests
+test html_print_uses_html_renderer ... ok
+test missing_file_exits_two ... ok
+test invalid_utf8_file_exits_two ... ok
+test empty_file_exits_one ... ok
+test markdown_print_uses_markdown_renderer ... ok
+test help_and_version_exit_zero ... ok
+test plain_reads_file_instead_of_stdin ... ok
+test empty_input_exits_one ... ok
+test plain_reads_stdin_by_default_and_explicit_dash ... ok
+test plain_stdout_has_one_trailing_native_newline ... ok
+test invalid_arguments_exit_three ... ok
+test clipboard_failure_exits_two ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/clipboard.rs (target/debug/deps/clipboard-5aaf7c54b8699e2e)
+
+running 1 test
+test clipboard_survives_cli_exit_and_modes_replace_formats ... ignored, requires an isolated X11 display; replaces its clipboard
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cleancopy_clipboard-09443c4b0d969f9e)
+
+running 12 tests
+test linux::retirement_tests::retired_owner_drains_routed_requests_and_incr ... ignored, requires an isolated X11 display; replaces clipboard contents
+test cf_html::tests::chinese_byte_offsets ... ok
+test cf_html::tests::emoji_byte_offsets ... ok
+test cf_html::tests::rejects_source_url_header_injection ... ok
+test cf_html::tests::empty_byte_offsets ... ok
+test cf_html::tests::ascii_byte_offsets ... ok
+test cf_html::tests::respects_existing_fragment_and_body_attributes ... ok
+test cf_html::tests::source_url_byte_offsets ... ok
+test linux::tests::snapshot_roundtrip_raw_targets_and_incr ... ignored, requires an isolated X11 display; replaces clipboard contents
+test linux::tests::rejects_missing_partial_or_misaligned_properties ... ok
+test tests::payload_and_mode_defaults ... ok
+test linux::tests::validates_native_targets_without_a_display ... ok
+
+test result: ok. 10 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native.rs (target/debug/deps/native-86aae4b985b99ffc)
+
+running 2 tests
+test html_only_snapshot_has_no_synthetic_text_targets ... ignored, requires an isolated X11 display; replaces clipboard contents
+test native_modes_and_byte_sizes ... ignored, requires a graphical clipboard; replaces its contents
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cleancopy_core-61e133b0fcbf94b0)
+
+running 8 tests
+test detect::tests::bare_links_do_not_hide_other_formatting ... ok
+test render_md::tests::preserves_tabs_inside_code ... ok
+test render_md::tests::cleans_without_reformatting ... ok
+test render_numbered::tests::chinese_large_counters ... ok
+test width::tests::cjk_is_double_width ... ok
+test render_md::tests::removes_osc_hyperlinks ... ok
+test detect::tests::detects_parsed_markdown_constructs ... ok
+test detect::tests::ignores_plain_text_and_unparsed_inline_syntax ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/desktop_html_detection.rs (target/debug/deps/desktop_html_detection-1f540f8532df2b58)
+
+running 7 tests
+test word_html_handles_empty_unicode_and_crlf ... ok
+test detection_recognizes_all_heading_levels_and_nested_constructs ... ok
+test detection_does_not_confuse_plain_syntax_or_bare_links_with_markdown ... ok
+test word_headings_have_semantics_builtin_styles_and_outline_levels ... ok
+test word_html_keeps_untrusted_content_inert ... ok
+test setext_headings_and_heading_inline_formatting_survive ... ok
+test word_rendering_preserves_base_body_for_non_heading_content ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (target/debug/deps/golden-b83329ee8bf7e0c8)
+
+running 1 test
+test fixture_snapshots ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/html.rs (target/debug/deps/html-43bab540f06a4fe7)
+
+running 5 tests
+test escapes_raw_html_instead_of_passing_through_active_markup ... ok
+test complete_document_including_empty_input ... ok
+test escapes_text_code_titles_alt_and_urls ... ok
+test blocks_dangerous_link_and_image_schemes ... ok
+test inline_styles_tables_tasks_and_unhighlighted_code ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/numbered.rs (target/debug/deps/numbered-905bcc47281e9cf9)
+
+running 12 tests
+test chinese_fifth_and_sixth_levels_have_named_markers ... ok
+test inline_ast_stripping_tables_quotes_and_verbatim_code ... ok
+test alternative_settings_previews ... ok
+test deep_lists_and_sibling_resets_in_all_styles ... ok
+test headings_reset_descendants_and_titles_reset_document ... ok
+test every_heading_changes_list_numbering_level ... ok
+test exact_settings_preview_and_newline_contract ... ok
+test multiline_and_loose_items_keep_indentation ... ok
+test nested_first_items_and_embedded_headings_preserve_item_boundaries ... ok
+test decimal_lists_continue_across_paragraphs_and_reset_at_headings ... ok
+test serialization_names_and_default_are_stable ... ok
+test stripping_markup_preserves_original_inline_spaces ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rtf.rs (target/debug/deps/rtf-dad679274382f028)
+
+running 9 tests
+test code_has_gray_background_preserved_whitespace_and_normalized_newlines ... ok
+test complete_ascii_document_even_when_empty ... ok
+test built_in_heading_styles_and_scoped_inline_formatting ... ok
+test loose_list_continuations_are_not_new_items_and_nested_counters_restart ... ok
+test preserves_tasks_quotes_links_images_html_footnotes_and_breaks ... ok
+test lists_have_native_metadata_nested_levels_starts_and_restarts ... ok
+test editable_tables_preserve_alignment_empty_cells_and_formatting ... ok
+test unicode_is_signed_utf16_and_rtf_syntax_is_inert ... ok
+test deep_lists_are_retained_and_clamped_to_rtf_limit ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rules.rs (target/debug/deps/rules-8795b2040ae68393)
+
+running 8 tests
+test code_content_is_not_trimmed_or_blank_line_collapsed ... ok
+test footnotes_are_numbered_by_reference_and_deduplicated ... ok
+test plain_output_ends_with_a_native_newline ... ok
+test ordered_starts_and_nested_bullet_numbering ... ok
+test tasks_have_checkboxes_not_numeric_markers ... ok
+test table_fallback_boundary_counts_display_columns ... ok
+test inline_html_and_links_are_readable ... ok
+test quotes_headings_and_paragraphs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cleancopy_desktop-3ff894cc43b1528e)
+
+running 36 tests
+test linux::tests::class_uses_class_not_instance_or_title ... ok
+test config::tests::rejects_blank_or_oversized_menu_hotkey ... ok
+test linux::tests::generated_formats_have_native_utf8_alias ... ok
+test linux::tests::modifier_powerset_deduplicates ... ok
+test config::tests::legacy_config_gets_independent_menu_hotkey ... ok
+test linux::tests::native_snapshot_roundtrip_keeps_metadata_and_opaque_atoms ... ok
+test linux::tests::parses_independent_shortcuts_and_recorder_keys ... ok
+test secure_input::tests::native_secure_input_is_disabled_on_unsupported_platforms ... ok
+test linux::tests::pointer_placement_clamps ... ok
+test secure_input::tests::stub_reports_enabled_and_disabled_states ... ok
+test engine::tests::update_config_does_not_restore_over_newer_clipboard ... ok
+test ui::menus::tests::count_grouping ... ok
+test ui::menus::tests::navigation_wraps_and_skips_disabled ... ok
+test ui::menus::tests::panels_fit_and_submenu_flips ... ok
+test engine::tests::update_config_invalidates_menu_even_when_hiding_fails ... ok
+test engine::tests::update_config_and_cancel_preserve_restoration_and_retry_deadlines ... ok
+test engine::tests::update_config_cancels_full_menu_before_applying_settings ... ok
+test ui::settings::tests::identifier_validation_and_entities ... ok
+test ui::settings::tests::groups_preserve_aliases_and_edit_every_rule ... ok
+test ui::settings::tests::recorded_syntax_matches_native_parser_and_mac_modifiers ... ok
+test ui::settings::tests::reorder_retains_disabled_state_and_relative_order ... ok
+test ui::menus::tests::keyboard_right_enter_and_escape ... ok
+test ui::menus::tests::tray_displays_the_full_menu_shortcut_not_the_paste_shortcut ... ok
+test ui::menus::tests::converting_blocks_choice_keys_but_keeps_escape_and_cancel_button ... ok
+test ui::tests::configured_pause_and_menu_resume_stay_in_sync ... ok
+test ui::menus::tests::tray_status_and_timed_pause_return_distinct_actions ... ok
+test ui::tests::demo_history_is_recent_and_newest_first ... ok
+test ui::tests::status_toggle_pauses_indefinitely_and_resumes ... ok
+test ui::tests::timed_pause_uses_event_clock_and_expires_at_boundary ... ok
+test ui::settings::tests::separate_recorders_only_edit_the_selected_hotkey ... ok
+test config::tests::hotkeys_round_trip_and_merge_independently ... ok
+test ui::settings::tests::recorder_rejects_duplicates_and_unmodified_keys_and_escape_cancels ... ok
+test ui::tests::tray_navigation_resizes_viewport ... ok
+test ui::settings::tests::word_preview_uses_real_bold_family_for_emphasis_and_headings ... ok
+test ui::menus::tests::summary_renders_model_count_and_hides_badge_before_clipping_warning ... ok
+test ui::settings::tests::view_renders_every_format_without_changing_configuration ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running unittests src/main.rs (target/debug/deps/cleancopy_app-2920d65d71a46ab9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config.rs (target/debug/deps/config-87f82935cadf6000)
+
+running 30 tests
+test equal_rank_conflicts_use_first_rule_for_each_identifier_kind ... ok
+test empty_whitespace_and_path_only_identifiers_never_match_or_get_remembered ... ok
+test history_is_newest_first_and_limited_to_two ... ok
+test defaults_and_platform_identities ... ok
+test every_builtin_alias_matches_individually_without_using_display_names ... ok
+test identifiers_are_exact_and_executable_paths_are_cross_platform ... ok
+test explicit_empty_rules_are_not_replaced_with_builtin_rules ... ok
+test default_toml_roundtrip_preserves_every_field_and_silent_override ... ok
+test invalid_utf8_is_an_io_error_and_error_messages_retain_context ... ok
+test load_defaults_and_normalizes_old_config_preserving_menu_order ... ok
+test disabled_menu_order_and_all_disabled_state_survive_roundtrip ... ok
+test history_ties_and_original_paste_survive_load_save_without_mutating_caller ... ok
+test match_precedence_is_bundle_then_executable_then_class_regardless_of_order ... ok
+test matching_is_exact_never_display_name_or_substring ... ok
+test identifierless_rules_are_invalid_but_original_history_can_be_anonymous ... ok
+test remember_does_not_change_other_aliases_in_multi_identifier_rules ... ok
+test remember_existing_rule_wins_over_earlier_multi_identifier_alias ... ok
+test invalid_config_and_io_failures_are_errors_not_silent_defaults ... ok
+test remember_prefers_specific_ids_without_rewriting_broad_rules ... ok
+test missing_empty_and_partial_configs_use_complete_defaults ... ok
+test same_millisecond_history_keeps_latest_calls ... ok
+test loading_and_saving_normalize_oversized_history ... ok
+test save_failures_preserve_destination_and_clean_temporary_files ... ok
+test malformed_fields_are_decode_errors ... ok
+test menu_normalization_preserves_first_duplicate_and_appends_missing_defaults ... ok
+test atomic_roundtrip_replaces_existing_file_and_creates_parent ... ok
+test remembering_each_identifier_survives_restart_and_reselection ... ok
+test all_formats_styles_and_fallbacks_roundtrip_through_disk ... ok
+test validation_rejects_bad_identity_fields_on_both_load_and_save ... ok
+test rule_and_text_limits_accept_boundaries_and_reject_excess ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
+     Running tests/desktop_e2e.rs (target/debug/deps/desktop_e2e-6005e37864ae290d)
+
+running 1 test
+test desktop_runtime_matrix ... ignored, native app process matrix; run scripts/e2e-desktop.sh
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/engine.rs (target/debug/deps/engine-cc6d640de4f71e3b)
+
+running 39 tests
+test cancellation_hide_failure_invalidates_menu_callbacks ... ok
+test disabled_mapped_format_does_not_become_an_unselectable_menu_default ... ok
+test escape_cancels_secondary_and_full_without_any_clipboard_effect ... ok
+test each_selectable_format_works_and_invalid_utf8_is_raw ... ok
+test explicit_markdown_takes_precedence_over_html ... ok
+test focus_change_during_write_cancels_paste_but_still_restores ... ok
+test explicit_full_hotkey_immediately_opens_full_without_pasting ... ok
+test fallible_effects_do_not_panic_or_lose_required_restoration ... ok
+test explicit_full_hotkey_overrides_silent_mode_for_all_content ... ok
+test markdown_bytes_not_canonicalized ... ok
+test injected_clock_drives_deadlines_without_wall_clock_or_sleep ... ok
+test menu_capture_checks_foreground_and_clipboard_before_paste ... ok
+test no_overlapping_transaction_and_external_change_not_overwritten ... ok
+test numeric_choices_one_through_five_restore_exact_original ... ok
+test pause_cancel_stale_menu_and_late_timers_are_harmless ... ok
+test plain_defaults_raw_but_menu_conversion_is_selectable_and_muted ... ok
+test primary_repeats_do_not_arbitrate_or_open_full_and_explicit_full_respects_restoration ... ok
+test recognized_silent_word_restores_every_original_byte_after_150ms ... ok
+test restoration_errors_retain_state_retry_and_block_hotkeys ... ok
+test secure_input_blocks_both_hotkeys_before_read_or_menu ... ok
+test html_is_preferred_over_plain_and_normalized_before_every_pipeline ... ok
+test silent_false_primary_immediately_opens_full_and_busy_hotkeys_are_ignored ... ok
+test silent_markdown_rule_preserves_source_and_restores_opaque_original ... ok
+test silent_numbered_rule_renders_expected_chinese_and_restores_all_formats ... ok
+test silent_off_opens_menu_on_every_completed_press ... ok
+test stale_escape_and_invalid_accelerators_cannot_dismiss_or_paste_new_menu ... ok
+test menu_order_shortcuts_defaults_and_content_labels ... ok
+test undo_effect_order_is_undo_then_original_paste_then_exact_current_restore ... ok
+test undo_failures_are_once_only_and_restore_when_written ... ok
+test undo_is_once_same_target_and_restores_current_not_old_clipboard ... ok
+test menu_counts_unicode_scalars_even_for_over_limit_source ... ok
+test unknown_secondary_remembers_and_honors_configured_items ... ok
+test unchecked_remember_does_not_create_rule_and_checked_choice_survives_toml ... ok
+test huge_and_images_raw_only_even_with_recognized_app ... ok
+test unknown_primary_pastes_plain_and_huge_directly_but_other_content_opens_secondary ... ok
+test cancel_or_pause_large_conversion_never_writes_or_pastes_and_stale_result_is_safe ... ok
+test large_conversion_progress_completes_via_tick_and_restores ... ok
+test secure_input_rechecked_for_menu_and_background_completion ... ok
+test background_completion_rechecks_clipboard_and_foreground ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+     Running tests/linux_smoke.rs (target/debug/deps/linux_smoke-1cb2a7a7de19c8e0)
+
+running 1 test
+test hotkey_pastes_formatted_text_and_restores_all_native_bytes ... ignored, requires Xvfb, xfwm4, xdotool; builds native examples
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cleancopy_clipboard
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cleancopy_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cleancopy_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

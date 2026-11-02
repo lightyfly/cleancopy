@@ -1,0 +1,68 @@
+    Blocking waiting for file lock on build directory
+   Compiling cleancopy-desktop v0.1.0 (/workspace/cleancopy/crates/cleancopy-desktop)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.39s
+     Running unittests src/lib.rs (target/debug/deps/cleancopy_desktop-3ff894cc43b1528e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/cleancopy_app-2920d65d71a46ab9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config.rs (target/debug/deps/config-87f82935cadf6000)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.00s
+
+     Running tests/desktop_e2e.rs (target/debug/deps/desktop_e2e-6005e37864ae290d)
+
+running 1 test
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+RESTORE all 5 advertised targets: raw bytes + property type/format exact
+PASS (a) gedit→numbered plain, no mapped menu
+RESTORE all 5 advertised targets: raw bytes + property type/format exact
+PASS (b) Word target receives semantic Word HTML
+MEASURE unknown-app→secondary-visible secondary: 164.96 ms (native mapped window + expected painted panel)
+
+thread 'desktop_runtime_matrix' (129005) panicked at crates/cleancopy-desktop/tests/desktop_e2e.rs:130:13:
+unknown-app→secondary-visible exceeded 100 ms: 164.962159ms
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+/tmp/.tmpV1wTi4/gedit.log:
+
+/tmp/.tmpV1wTi4/wm.log:
+
+(xfwm4:129044): dbind-WARNING **: 09:41:01.901: AT-SPI: Error retrieving accessibility bus address: org.freedesktop.DBus.Error.ServiceUnknown: The name org.a11y.Bus was not provided by any .service files
+
+(xfwm4:129044): xfwm4-WARNING **: 09:41:02.140: Unsupported GL renderer (llvmpipe (LLVM 19.1.7, 256 bits)).
+
+(xfwm4:129044): xfwm4-WARNING **: 09:41:02.143: Failed to connect to session manager: Failed to connect to the session manager: SESSION_MANAGER environment variable not defined
+
+/tmp/.tmpV1wTi4/fixture.log:
+
+/tmp/.tmpV1wTi4/daemon.log:
+CleanCopy tray: no StatusNotifier host (Error(Watcher(ServiceUnknown("The name org.kde.StatusNotifierWatcher was not provided by any .service files")))); daemon continues
+CleanCopy Linux hotkey ready
+CleanCopy Linux hotkey ready
+
+/tmp/.tmpV1wTi4/unknown-e2e.log:
+
+/tmp/.tmpV1wTi4/WINWORD.EXE.log:
+
+test desktop_runtime_matrix ... FAILED
+
+failures:
+
+failures:
+    desktop_runtime_matrix
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+
+error: test failed, to rerun pass `-p cleancopy-desktop --test desktop_e2e`

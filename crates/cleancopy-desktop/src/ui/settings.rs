@@ -83,22 +83,10 @@ impl SettingsState {
                 let size = ui.max_rect().size().max(Vec2::new(MIN_WIDTH, 480.0));
                 let window = egui::Rect::from_min_size(origin, size);
                 ui.set_min_size(window.size());
-                let title = egui::Rect::from_min_size(origin, Vec2::new(size.x, 44.0));
-                ui.painter().text(
-                    title.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "CleanCopy 设置",
-                    FontId::proportional(13.0),
-                    TEXT,
-                );
-                // Traffic-light buttons only on macOS; Linux/Windows use
-                // native window decorations (report v4 M-6).
-                super::paint_mac_window_buttons(ui, origin);
-                ui.painter()
-                    .hline(title.x_range(), title.bottom(), Stroke::new(1.0_f32, LINE));
+                super::paint_title_strip(ui, origin, size.x, "CleanCopy 设置");
                 let left = egui::Rect::from_min_size(
-                    origin + Vec2::new(0.0, 44.0),
-                    Vec2::new(LEFT_WIDTH, size.y - 44.0),
+                    origin + Vec2::new(0.0, super::TITLE_STRIP),
+                    Vec2::new(LEFT_WIDTH, size.y - super::TITLE_STRIP),
                 );
                 ui.painter()
                     .vline(left.right(), left.y_range(), Stroke::new(1.0_f32, LINE));
@@ -117,8 +105,8 @@ impl SettingsState {
                         changed |= self.controls(ui, config);
                     });
                 let right = egui::Rect::from_min_size(
-                    origin + Vec2::new(LEFT_WIDTH, 44.0),
-                    Vec2::new(size.x - LEFT_WIDTH, size.y - 44.0),
+                    origin + Vec2::new(LEFT_WIDTH, super::TITLE_STRIP),
+                    Vec2::new(size.x - LEFT_WIDTH, size.y - super::TITLE_STRIP),
                 );
                 ui.painter()
                     .rect_filled(right, 0.0, Color32::from_rgb(250, 250, 251));
@@ -609,7 +597,8 @@ fn section(ui: &mut egui::Ui, text: &str) -> egui::Response {
 }
 
 /// Window width the settings layout is designed for (default 960×680).
-pub const DEFAULT_SIZE: Vec2 = Vec2::new(960.0, 680.0);
+/// Content size; 44 px shorter off macOS, where the native title bar replaces the strip.
+pub const DEFAULT_SIZE: Vec2 = Vec2::new(960.0, 636.0 + super::TITLE_STRIP);
 const MIN_WIDTH: f32 = 860.0;
 const LEFT_WIDTH: f32 = 400.0;
 const SEG_TRACK: Color32 = Color32::from_rgb(240, 240, 243);

@@ -24,6 +24,11 @@ struct Harness {
 /// Matches the app's own windows ("CleanCopy", "CleanCopy 设置",
 /// "欢迎使用 CleanCopy") but not the pasteprobe target or the floating menu.
 /// xdotool matches case-insensitively and byte-wise (no UTF-8 in the regex).
+/// Onboarding click targets (window-relative). Off macOS the content starts
+/// right under the native title bar, so these are 44 px higher than v4.
+const FOOTER_Y: &str = "289";
+const INPUT_Y: &str = "156";
+
 const APP_WINDOW: &str = "CleanCopy($| [^nf])";
 
 fn screenshot_dir(root: &Path) -> PathBuf {
@@ -757,11 +762,11 @@ fn desktop_runtime_matrix() {
         thread::sleep(Duration::from_millis(600));
     };
     capture(1);
-    click("420", "333"); // 下一步
+    click("420", FOOTER_Y); // 下一步
     capture(2);
-    click("420", "333");
-    click("320", "200"); // focus the try-it input
-                         // "Copy" the sample, then press the real hotkey inside the input.
+    click("420", FOOTER_Y);
+    click("320", INPUT_Y); // focus the try-it input
+                           // "Copy" the sample, then press the real hotkey inside the input.
     let mut xclip = Command::new("xclip")
         .env("DISPLAY", &h.display)
         .args(["-selection", "clipboard"])
@@ -779,15 +784,34 @@ fn desktop_runtime_matrix() {
     }
     xclip.wait().unwrap();
     h.xdo(&["windowfocus", "--sync", &id]);
-    // Hold the chord across frames like a person does; egui reports paste
-    // modifiers per frame, and an instant xdotool chord releases them first.
-    h.xdo(&["keydown", "ctrl+shift+v"]);
-    thread::sleep(Duration::from_millis(150));
-    h.xdo(&["keyup", "ctrl+shift+v"]);
+    // An instant xdotool chord (press+release inside one frame) must still
+    // format: the onboarding window owns the hotkey via its own X11 grab.
+    thread::sleep(Duration::from_millis(400));
+    h.xdo(&["key", "ctrl+shift+v"]);
     thread::sleep(Duration::from_millis(600));
+    h.xdo(&["key", "ctrl+a", "ctrl+c"]);
+    thread::sleep(Duration::from_millis(300));
+    let typed = String::from_utf8(
+        Command::new("xclip")
+            .env("DISPLAY", &h.display)
+            .args(["-selection", "clipboard", "-o"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        typed.contains("一、本周进展") && !typed.contains("## "),
+        "fast hotkey in 试一试 must insert the formatted sample, got {typed:?}"
+    );
+    println!(
+        "PASS onboarding: instant xdotool Ctrl+Shift+V in 试一试 inserted the formatted sample"
+    );
+    h.xdo(&["mousemove", "--window", &id, "320", INPUT_Y, "click", "1"]);
+    thread::sleep(Duration::from_millis(300));
     capture(3);
     assert!(!Config::load(&fresh).unwrap().onboarding_done);
-    click("420", "333"); // 完成
+    click("420", FOOTER_Y); // 完成
     wait("onboarding closed", || {
         !Command::new("xdotool")
             .env("DISPLAY", &h.display)

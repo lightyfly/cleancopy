@@ -75,6 +75,32 @@ impl Platform for DemoPlatform {
 /// Elsewhere the window manager's native decorations are used.
 pub const CUSTOM_TITLE_BAR: bool = cfg!(target_os = "macos");
 
+/// Height of the in-content title strip. Only macOS draws one (its window has
+/// no native decorations); elsewhere the native title bar already shows the
+/// title, so the content starts at the top (report v5).
+pub const TITLE_STRIP: f32 = if CUSTOM_TITLE_BAR { 44.0 } else { 0.0 };
+
+/// Paints the macOS-only title strip (title text, traffic lights, divider).
+pub(crate) fn paint_title_strip(ui: &egui::Ui, origin: egui::Pos2, width: f32, title: &str) {
+    if !CUSTOM_TITLE_BAR {
+        return;
+    }
+    let rect = egui::Rect::from_min_size(origin, egui::vec2(width, TITLE_STRIP));
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        title,
+        egui::FontId::proportional(13.0),
+        palette::TEXT,
+    );
+    paint_mac_window_buttons(ui, origin);
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom(),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(230, 230, 234)),
+    );
+}
+
 /// The red/yellow/green macOS window buttons, painted only on macOS.
 pub(crate) fn paint_mac_window_buttons(ui: &egui::Ui, origin: egui::Pos2) {
     if !CUSTOM_TITLE_BAR {
@@ -118,6 +144,11 @@ pub struct DesktopApp {
     epoch: u64,
     /// Onboarding owns the daemon hotkey-pause marker (M-4).
     pause_marker: Option<PathBuf>,
+    /// Linux: onboarding's own grab of the paste hotkey during 「试一试」.
+    #[cfg(target_os = "linux")]
+    try_grab: Option<crate::linux::TryHotkeyGrab>,
+    #[cfg(target_os = "linux")]
+    try_unfocused_since: Option<Instant>,
 }
 impl DesktopApp {
     pub fn new(
@@ -161,6 +192,10 @@ impl DesktopApp {
             started: Instant::now(),
             epoch,
             pause_marker: None,
+            #[cfg(target_os = "linux")]
+            try_grab: None,
+            #[cfg(target_os = "linux")]
+            try_unfocused_since: None,
         };
         if view == View::Settings && std::env::var_os(FOCUS_HOTKEY_ENV).is_some() {
             app.settings.focus_hotkey();
@@ -175,6 +210,52 @@ impl DesktopApp {
     }
     /// Creates/removes the marker that makes the daemon release its global
     /// hotkey grabs, so the onboarding try-it box receives the real hotkey.
+    /// Linux: while 「试一试」 is shown and the window has focus, own the paste
+    /// hotkey via an X11 grab so every press (however fast) formats.
+    #[cfg(target_os = "linux")]
+    fn try_step_hotkey(&mut self, ctx: &egui::Context) {
+        // An activated grab itself makes X report the window unfocused for
+        // the length of the press, so only a sustained focus loss (the user
+        // switched apps) gives the hotkey back.
+        let focused = ctx.input(|i| i.focused);
+        let now = Instant::now();
+        let unfocused_since = if focused {
+            None
+        } else {
+            Some(*self.try_unfocused_since.get_or_insert(now))
+        };
+        self.try_unfocused_since = unfocused_since;
+        let recently_focused =
+            unfocused_since.is_none_or(|since| now - since < std::time::Duration::from_millis(500));
+        if !focused && recently_focused && self.try_grab.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        let want =
+            self.onboarding.wants_hotkey_pause() && self.pause_marker.is_some() && recently_focused;
+        if want && self.try_grab.is_none() {
+            match crate::linux::TryHotkeyGrab::new(ctx) {
+                Ok(grab) => self.try_grab = Some(grab),
+                Err(error) => eprintln!("onboarding hotkey grab unavailable: {error}"),
+            }
+        }
+        let Some(grab) = &mut self.try_grab else {
+            return;
+        };
+        // Drain before syncing: an activated grab moves X focus to the grabbing
+        // client for the duration of the press, so this frame may see the
+        // window as unfocused and drop the grab.
+        for _ in 0..grab.drain() {
+            self.onboarding.native_hotkey(ctx, self.engine.config());
+        }
+        let hotkey = self.engine.config().hotkey.clone();
+        if !grab.sync(want, &hotkey) {
+            // The daemon releases its grab within ~250 ms of the pause marker.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn try_step_hotkey(&mut self, _ctx: &egui::Context) {}
+
     fn set_hotkey_pause(&mut self, on: bool) {
         if on == self.pause_marker.is_some() {
             return;
@@ -333,6 +414,7 @@ impl eframe::App for DesktopApp {
                         Err(error) => self.error = Some(error.to_string()),
                     }
                 }
+                self.try_step_hotkey(ctx);
                 let previous = self.engine.config().clone();
                 let mut config = previous.clone();
                 let (changed, outcome) = self.onboarding.show(ctx, &mut config);
@@ -481,6 +563,10 @@ mod tests {
             started: Instant::now(),
             epoch: 1_000,
             pause_marker: None,
+            #[cfg(target_os = "linux")]
+            try_grab: None,
+            #[cfg(target_os = "linux")]
+            try_unfocused_since: None,
         }
     }
 

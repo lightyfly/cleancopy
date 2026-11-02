@@ -147,8 +147,7 @@ Workspace gates at every commit: `cargo build --workspace --all-targets`,
   try box receives Ctrl+Shift+V; 「更改快捷键」 opens Settings recording the paste hotkey.
 - M-2: undo row no longer advertises Ctrl+Z (not a global binding).
 - M-6: custom traffic-light title bar only on macOS; native decorations and
-  per-window titles elsewhere. Known cosmetic: the in-content title strip still
-  repeats the window title on Linux/Windows.
+  per-window titles elsewhere (in-content strip removed in round v5).
 - M-3 (WPS first-level bullets): **not reproduced** — WPS cannot be started on
   the isolated test display. Likely cause: Word-HTML `disc` imports as a Symbol-font
   glyph and no Symbol/Wingdings font is installed here. No code change.
@@ -180,3 +179,29 @@ About 65 MB of the remainder is llvmpipe / LLVM software GL on this box.
 - Manual 5 MB background conversion + 取消 click on Xvfb (release) ×10: **10/10** cancelled, no paste.
 - One extra `--update-screenshots` run failed once on a timing assert
   (secondary menu 128 ms > 100 ms, run 11 of 20) and passed on rerun; reported, not hidden.
+
+## Round v5 (2026-11-02, UTC+8)
+
+Gates: build all targets, `cargo test --workspace` **239 passed, 0 failed, 7 ignored**,
+fmt --check, clippy -D warnings (also clippy for aarch64-apple-darwin and
+x86_64-pc-windows-msvc). `scripts/e2e-desktop.sh --update-screenshots`: exit 0, 14 PASS lines.
+
+- Title strip: on Linux/Windows the 44 px in-content title strip of Settings and
+  onboarding is gone; only the native title bar shows the title. Content starts
+  at the top with its existing padding (Settings panes 16 px, onboarding body 18 px).
+  Window content height shrinks by 44 px (Settings 960×636, onboarding 480×316).
+  macOS keeps the strip and traffic lights (unchanged, `TITLE_STRIP` = 44).
+  e2e onboarding clicks moved up 44 px (footer y 289, try box y 156).
+  Screenshots refreshed and inspected (e2e-settings, onboarding-1/2/3).
+- 「试一试」 fast hotkey: on Linux the onboarding window grabs the paste hotkey
+  on X11 itself while step 3 is shown and focused, so the press arrives with
+  its exact modifiers. Before this, egui only saw a modifier-less Paste and
+  inserted raw Markdown. The grab survives the short focus-out that an activated
+  grab causes, and is released 500 ms after a real focus loss, on leaving the
+  step, or on exit. Unit test `native_hotkey_formats_only_on_the_try_step_and_focuses_the_box`;
+  e2e now uses an instant `xdotool key ctrl+shift+v` and checks the box text.
+  Fast-press check on Xvfb (10 chords in one `xdotool key --delay 1`, 20 with
+  `--delay 0`, 20 spaced 250 ms): **50/50 formatted, 0 raw** in each of 4 runs
+  (200/200) without a daemon, and 50/50 in each of 2 runs with the daemon
+  paused/restoring around it. Plain Ctrl+V in the box still pastes raw text.
+  Windows/macOS still use the egui path, so a single-frame press there is not fixed or verified.

@@ -66,39 +66,7 @@ impl LinuxPlatform {
             .map_err(err)?
             .reply()
             .map_err(err)?;
-        let min = conn.setup().min_keycode;
-        let mapping = conn
-            .get_keyboard_mapping(min, conn.setup().max_keycode - min + 1)
-            .map_err(err)?
-            .reply()
-            .map_err(err)?;
-        let keys: Vec<_> = mapping
-            .keysyms
-            .chunks(usize::from(mapping.keysyms_per_keycode))
-            .enumerate()
-            .map(|(i, symbols)| (min + i as u8, symbols.to_vec()))
-            .collect();
-        let modifiers = conn
-            .get_modifier_mapping()
-            .map_err(err)?
-            .reply()
-            .map_err(err)?;
-        let per = modifiers.keycodes.len() / 8;
-        let mut lock_masks = Vec::new();
-        if per != 0 {
-            for (index, codes) in modifiers.keycodes.chunks(per).enumerate() {
-                if codes.iter().any(|code| {
-                    keys.iter().any(|(k, syms)| {
-                        k == code
-                            && syms
-                                .iter()
-                                .any(|s| matches!(*s, 0xffe5 | 0xffe6 | 0xff7f | 0xff14))
-                    })
-                }) {
-                    lock_masks.push(1 << index);
-                }
-            }
-        }
+        let (keys, lock_masks) = keyboard_layout(&conn)?;
         let locks = lock_variants(&lock_masks);
         let hotkeys = configured_hotkeys(config, &keys)?;
         let clipboard = NativeClipboard::new().map_err(err)?;
@@ -589,6 +557,153 @@ impl LinuxDriver {
         Ok(handled)
     }
 }
+/// Onboarding's own X11 grab of the paste hotkey for the 「试一试」 step.
+///
+/// egui-winit turns Ctrl(+Shift)+V into a modifier-less `Paste` event and only
+/// reports the modifiers held at the end of the frame, so a press+release that
+/// lands in one frame (fast `xdotool key`) looked like a plain Ctrl+V. A
+/// passive grab delivers the press with its exact modifier state instead, and
+/// keeps it from also reaching the text box as a raw paste.
+pub struct TryHotkeyGrab {
+    conn: RustConnection,
+    root: Window,
+    keys: KeyTable,
+    locks: Vec<u16>,
+    /// Keycode/modifier pairs currently grabbed, and the hotkey text they came from.
+    grabbed: Vec<(u8, u16)>,
+    hotkey: String,
+}
+impl TryHotkeyGrab {
+    pub fn new(ctx: &eframe::egui::Context) -> Result<Self> {
+        use std::os::fd::AsRawFd;
+        let (conn, screen) = x11rb::connect(None).map_err(err)?;
+        let root = conn.setup().roots[screen].root;
+        let (keys, lock_masks) = keyboard_layout(&conn)?;
+        spawn_x11_waker(conn.stream().as_raw_fd(), ctx.clone());
+        Ok(Self {
+            conn,
+            root,
+            keys,
+            locks: lock_variants(&lock_masks),
+            grabbed: Vec::new(),
+            hotkey: String::new(),
+        })
+    }
+    /// Hold the grab while `want`; returns false while a wanted grab is still
+    /// refused (the daemon has not yet released it), so the caller retries.
+    pub fn sync(&mut self, want: bool, hotkey: &str) -> bool {
+        if !self.grabbed.is_empty() && (!want || hotkey != self.hotkey) {
+            self.release();
+        }
+        if !want || !self.grabbed.is_empty() {
+            return true;
+        }
+        let Ok((symbol, modifiers)) = parse_hotkey(hotkey) else {
+            return true;
+        };
+        let codes: Vec<u8> = self
+            .keys
+            .iter()
+            .filter(|(_, symbols)| symbols.contains(&symbol))
+            .map(|(code, _)| *code)
+            .collect();
+        for code in codes {
+            for &locks in &self.locks {
+                let ok = self
+                    .conn
+                    .grab_key(
+                        false,
+                        self.root,
+                        ModMask::from(modifiers | locks),
+                        code,
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                    )
+                    .ok()
+                    .and_then(|cookie| cookie.check().ok())
+                    .is_some();
+                if !ok {
+                    self.release();
+                    return false;
+                }
+                self.grabbed.push((code, modifiers | locks));
+            }
+        }
+        self.hotkey = hotkey.to_owned();
+        let _ = self.conn.flush();
+        true
+    }
+    fn release(&mut self) {
+        for (code, mask) in self.grabbed.drain(..) {
+            let _ = self.conn.ungrab_key(code, self.root, ModMask::from(mask));
+        }
+        let _ = self.conn.flush();
+    }
+    /// Number of hotkey presses received since the last call.
+    pub fn drain(&mut self) -> usize {
+        let mut presses = 0;
+        while let Ok(Some(event)) = self.conn.poll_for_event() {
+            if let XEvent::KeyPress(key) = event {
+                let state = u16::from(key.state) & 0xff;
+                if self
+                    .grabbed
+                    .iter()
+                    .any(|&(code, mask)| code == key.detail && mask == state)
+                {
+                    presses += 1;
+                }
+            }
+        }
+        presses
+    }
+}
+impl Drop for TryHotkeyGrab {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Keycode → keysyms for every key.
+type KeyTable = Vec<(u8, Vec<u32>)>;
+
+/// Keycode→keysyms table and the modifier bits of Caps/Num/Scroll lock.
+fn keyboard_layout(conn: &RustConnection) -> Result<(KeyTable, Vec<u16>)> {
+    let min = conn.setup().min_keycode;
+    let mapping = conn
+        .get_keyboard_mapping(min, conn.setup().max_keycode - min + 1)
+        .map_err(err)?
+        .reply()
+        .map_err(err)?;
+    let keys: Vec<_> = mapping
+        .keysyms
+        .chunks(usize::from(mapping.keysyms_per_keycode))
+        .enumerate()
+        .map(|(i, symbols)| (min + i as u8, symbols.to_vec()))
+        .collect();
+    let modifiers = conn
+        .get_modifier_mapping()
+        .map_err(err)?
+        .reply()
+        .map_err(err)?;
+    let per = modifiers.keycodes.len() / 8;
+    let mut lock_masks = Vec::new();
+    if per != 0 {
+        for (index, codes) in modifiers.keycodes.chunks(per).enumerate() {
+            if codes.iter().any(|code| {
+                keys.iter().any(|(k, syms)| {
+                    k == code
+                        && syms
+                            .iter()
+                            .any(|s| matches!(*s, 0xffe5 | 0xffe6 | 0xff7f | 0xff14))
+                })
+            }) {
+                lock_masks.push(1 << index);
+            }
+        }
+    }
+    Ok((keys, lock_masks))
+}
+
 fn configured_hotkeys(config: &Config, keys: &[(u8, Vec<u32>)]) -> Result<Vec<(u8, u16, bool)>> {
     let mut result = Vec::new();
     for (text, full) in [(&config.hotkey, false), (&config.full_menu_hotkey, true)] {

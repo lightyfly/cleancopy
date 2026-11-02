@@ -1,62 +1,62 @@
-CleanCopy desktop E2E 2026-11-02T14:08:21+08:00
+CleanCopy desktop E2E 2026-11-02T14:18:57+08:00
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
      Running tests/desktop_e2e.rs (target/debug/deps/desktop_e2e-b051e87bdfdcdeec)
 
 running 1 test
-test desktop_runtime_matrix ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
-dbus-daemon[570254]: [session uid=1000 pid=570254 pidfd=5] Activating service name='org.xfce.Xfconf' requested by ':1.1' (uid=1000 pid=570282 comm="xfwm4" label="kernel")
-dbus-daemon[570254]: [session uid=1000 pid=570254 pidfd=5] Successfully activated service 'org.xfce.Xfconf'
+test desktop_runtime_matrix ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+dbus-daemon[607177]: [session uid=1000 pid=607177 pidfd=5] Activating service name='org.xfce.Xfconf' requested by ':1.1' (uid=1000 pid=607205 comm="xfwm4" label="kernel")
+dbus-daemon[607177]: [session uid=1000 pid=607177 pidfd=5] Successfully activated service 'org.xfce.Xfconf'
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS (a) gedit→numbered plain, no mapped menu
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS (b) Word target receives semantic Word HTML
-MEASURE unknown-app→secondary-visible secondary: 11.45 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary: 23.88 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-secondary.png
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-remember-checked.png
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS (d) mouse remember checkbox + key2 persisted rule; next paste silent
-MEASURE Ctrl+Alt+V→full-menu-visible full: 22.03 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Alt+V→full-menu-visible full: 28.87 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-full.png
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS (e) native Ctrl+Alt+V full menu (format panel collapsed)
-MEASURE Ctrl+Alt+V→full-menu-visible undo: 22.76 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Alt+V→full-menu-visible undo: 25.83 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-undo.png
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS (g) actual Ctrl+Z reverted second conversion; original native paste replaced it
-MEASURE Ctrl+Shift+V→full-menu-visible nonsilent-1: 15.82 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Shift+V→full-menu-visible nonsilent-1: 23.63 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-nonsilent-1.png
-MEASURE Ctrl+Shift+V→full-menu-visible nonsilent-2: 22.08 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Shift+V→full-menu-visible nonsilent-2: 27.69 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-nonsilent-2.png
 PASS (f) silent_mode=false maps full menu on each single press
-MEASURE 10k-char hotkey→convert+native-paste: 19.93 ms (native target received clipboard bytes)
+MEASURE 10k-char hotkey→convert+native-paste: 18.80 ms (native target received clipboard bytes)
 RESTORE all 5 advertised targets: raw bytes + property type/format exact
 PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored
-MEASURE unknown-app→secondary-visible secondary-run2: 25.38 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run3: 20.42 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run4: 24.11 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run5: 21.50 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run6: 22.15 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run7: 11.23 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run8: 19.04 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run9: 18.68 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run10: 26.84 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run11: 26.39 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run12: 25.72 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run13: 21.98 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run14: 27.57 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run15: 20.94 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run16: 22.98 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run17: 25.84 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run18: 25.80 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run19: 26.38 ms (native mapped window + expected painted panel)
-MEASURE unknown-app→secondary-visible secondary-run20: 26.46 ms (native mapped window + expected painted panel)
-MEASURE secondary x20 (first press after launch = 11.45 ms): min 11.23 / median 23.55 / max 27.57 ms
-MEASURE unknown-app→secondary-visible secondary-3MB: 44.64 ms (native mapped window + expected painted panel)
-MEASURE Ctrl+Alt+V→full-menu-visible 3MB: 40.86 ms (native mapped window + expected painted panel)
-MEASURE Ctrl+Alt+V→full-menu-visible 5MB: 34.47 ms (native mapped window + expected painted panel)
-MEASURE Ctrl+Alt+V→full-menu-visible background-before: 42.86 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run2: 28.83 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run3: 22.00 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run4: 26.54 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run5: 28.06 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run6: 28.24 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run7: 23.86 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run8: 28.09 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run9: 12.40 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run10: 23.24 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run11: 27.65 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run12: 21.18 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run13: 21.27 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run14: 20.18 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run15: 28.65 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run16: 25.57 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run17: 27.77 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run18: 25.95 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run19: 21.05 ms (native mapped window + expected painted panel)
+MEASURE unknown-app→secondary-visible secondary-run20: 26.67 ms (native mapped window + expected painted panel)
+MEASURE secondary x20 (first press after launch = 23.88 ms): min 12.40 / median 25.76 / max 28.83 ms
+MEASURE unknown-app→secondary-visible secondary-3MB: 52.69 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Alt+V→full-menu-visible 3MB: 17.08 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Alt+V→full-menu-visible 5MB: 23.38 ms (native mapped window + expected painted panel)
+MEASURE Ctrl+Alt+V→full-menu-visible background-before: 55.12 ms (native mapped window + expected painted panel)
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-background-before.png
 Saved 640x360 to /workspace/cleancopy/docs/screenshots/e2e-background-progress.png
 PASS S-01 real large conversion cancelled by clicking 取消; no paste and clipboard unchanged
@@ -66,121 +66,119 @@ Saved 1280x800 to /workspace/cleancopy/docs/screenshots/e2e-preview.png
 PASS preview launch probe
 Saved 1280x800 to /workspace/cleancopy/docs/screenshots/e2e-tray.png
 PASS tray launch probe
-Saved 480x360 to /workspace/cleancopy/docs/screenshots/onboarding-1.png
-Saved 480x360 to /workspace/cleancopy/docs/screenshots/onboarding-2.png
-Saved 480x360 to /workspace/cleancopy/docs/screenshots/onboarding-3.png
+Saved 480x316 to /workspace/cleancopy/docs/screenshots/onboarding-1.png
+Saved 480x316 to /workspace/cleancopy/docs/screenshots/onboarding-2.png
+PASS onboarding: instant xdotool Ctrl+Shift+V in 试一试 inserted the formatted sample
+Saved 480x316 to /workspace/cleancopy/docs/screenshots/onboarding-3.png
 PASS onboarding: first-run daemon spawned it; 3 steps captured; 完成 persisted onboarding_done
 PASS desktop runtime matrix: real target/debug/cleancopy-app --config; all native peers isolated
-X connection to :0 broken (explicit kill or server shutdown).
-/tmp/.tmp7Z3aac/gedit.log:
+/tmp/.tmpSqDpSH/gedit.log:
 
-/tmp/.tmp7Z3aac/wm.log:
+/tmp/.tmpSqDpSH/wm.log:
 
-(xfwm4:570282): dbind-WARNING **: 14:08:22.153: AT-SPI: Error retrieving accessibility bus address: org.freedesktop.DBus.Error.ServiceUnknown: The name org.a11y.Bus was not provided by any .service files
+(xfwm4:607205): dbind-WARNING **: 14:18:57.906: AT-SPI: Error retrieving accessibility bus address: org.freedesktop.DBus.Error.ServiceUnknown: The name org.a11y.Bus was not provided by any .service files
 
-(xfwm4:570282): xfwm4-WARNING **: 14:08:22.235: Unsupported GL renderer (llvmpipe (LLVM 19.1.7, 256 bits)).
+(xfwm4:607205): xfwm4-WARNING **: 14:18:58.003: Unsupported GL renderer (llvmpipe (LLVM 19.1.7, 256 bits)).
 
-(xfwm4:570282): xfwm4-WARNING **: 14:08:22.237: Failed to connect to session manager: Failed to connect to the session manager: SESSION_MANAGER environment variable not defined
+(xfwm4:607205): xfwm4-WARNING **: 14:18:58.005: Failed to connect to session manager: Failed to connect to the session manager: SESSION_MANAGER environment variable not defined
 
-/tmp/.tmp7Z3aac/html-only.log:
+/tmp/.tmpSqDpSH/html-only.log:
 
-/tmp/.tmp7Z3aac/fixture.log:
+/tmp/.tmpSqDpSH/fixture.log:
 
-/tmp/.tmp7Z3aac/secondary-timing.log:
+/tmp/.tmpSqDpSH/secondary-timing.log:
 
-/tmp/.tmp7Z3aac/timing-e2e.log:
+/tmp/.tmpSqDpSH/timing-e2e.log:
 
-/tmp/.tmp7Z3aac/daemon.log:
+/tmp/.tmpSqDpSH/daemon.log:
 CleanCopy tray: no StatusNotifier host (Error(Watcher(ServiceUnknown("The name org.kde.StatusNotifierWatcher was not provided by any .service files")))); daemon continues
 CleanCopy Linux hotkey ready
 CleanCopy Linux hotkey ready
-CleanCopy menu mapped 1.8 ms into its frame (since last frame 2.8 ms)
+CleanCopy menu mapped 3.0 ms into its frame (since last frame 3.7 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.8 ms into its frame (since last frame 2.6 ms)
+CleanCopy menu mapped 2.4 ms into its frame (since last frame 3.2 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.1 ms into its frame (since last frame 3.2 ms)
+CleanCopy menu mapped 2.5 ms into its frame (since last frame 3.1 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 3.2 ms into its frame (since last frame 285.8 ms)
+CleanCopy menu mapped 2.1 ms into its frame (since last frame 292.6 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.7 ms into its frame (since last frame 2.4 ms)
+CleanCopy menu mapped 2.1 ms into its frame (since last frame 3.1 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.9 ms into its frame (since last frame 2.9 ms)
+CleanCopy menu mapped 3.3 ms into its frame (since last frame 4.1 ms)
+CleanCopy menu metadata ready
+CleanCopy menu mapped 2.7 ms into its frame (since last frame 3.7 ms)
+CleanCopy menu metadata ready
+CleanCopy menu mapped 2.3 ms into its frame (since last frame 3.4 ms)
+CleanCopy menu metadata ready
+CleanCopy menu mapped 2.4 ms into its frame (since last frame 3.3 ms)
+CleanCopy menu metadata ready
+CleanCopy menu mapped 2.5 ms into its frame (since last frame 3.7 ms)
 CleanCopy menu metadata ready
 CleanCopy menu mapped 2.1 ms into its frame (since last frame 2.8 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 2.2 ms into its frame (since last frame 2.8 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 1.8 ms into its frame (since last frame 2.8 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 2.1 ms into its frame (since last frame 2.8 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 2.9 ms into its frame (since last frame 3.7 ms)
-CleanCopy menu mapped 2.0 ms into its frame (since last frame 3.1 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 2.7 ms into its frame (since last frame 3.4 ms)
-CleanCopy menu metadata ready
-CleanCopy menu mapped 2.2 ms into its frame (since last frame 3.0 ms)
 CleanCopy menu metadata ready
 CleanCopy menu mapped 1.9 ms into its frame (since last frame 2.7 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.7 ms into its frame (since last frame 2.6 ms)
+CleanCopy menu mapped 2.5 ms into its frame (since last frame 3.2 ms)
+CleanCopy menu mapped 2.0 ms into its frame (since last frame 3.1 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.7 ms into its frame (since last frame 3.6 ms)
+CleanCopy menu mapped 1.9 ms into its frame (since last frame 2.7 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.2 ms into its frame (since last frame 3.0 ms)
+CleanCopy menu mapped 1.8 ms into its frame (since last frame 2.7 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.4 ms into its frame (since last frame 3.1 ms)
+CleanCopy menu mapped 2.1 ms into its frame (since last frame 3.8 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.1 ms into its frame (since last frame 2.6 ms)
+CleanCopy menu mapped 2.0 ms into its frame (since last frame 2.9 ms)
+CleanCopy menu mapped 2.5 ms into its frame (since last frame 3.4 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.9 ms into its frame (since last frame 2.6 ms)
+CleanCopy menu mapped 2.4 ms into its frame (since last frame 3.2 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.1 ms into its frame (since last frame 2.7 ms)
+CleanCopy menu mapped 2.1 ms into its frame (since last frame 3.0 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 1.9 ms into its frame (since last frame 2.5 ms)
+CleanCopy menu mapped 2.5 ms into its frame (since last frame 3.2 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 2.0 ms into its frame (since last frame 2.8 ms)
+CleanCopy menu mapped 2.4 ms into its frame (since last frame 3.0 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 6.4 ms into its frame (since last frame 7.1 ms)
+CleanCopy menu mapped 2.9 ms into its frame (since last frame 4.0 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 6.6 ms into its frame (since last frame 7.5 ms)
+CleanCopy menu mapped 1.8 ms into its frame (since last frame 2.5 ms)
 CleanCopy menu metadata ready
-CleanCopy menu mapped 9.4 ms into its frame (since last frame 10.6 ms)
-CleanCopy menu mapped 3.9 ms into its frame (since last frame 4.9 ms)
+CleanCopy menu mapped 5.4 ms into its frame (since last frame 6.6 ms)
+CleanCopy menu mapped 3.3 ms into its frame (since last frame 4.0 ms)
+CleanCopy menu mapped 4.6 ms into its frame (since last frame 7.6 ms)
 CleanCopy menu metadata ready
 
-/tmp/.tmp7Z3aac/full-3mb.log:
+/tmp/.tmpSqDpSH/full-3mb.log:
 
-/tmp/.tmp7Z3aac/large.log:
+/tmp/.tmpSqDpSH/large.log:
 
-/tmp/.tmp7Z3aac/secondary-3mb.log:
+/tmp/.tmpSqDpSH/secondary-3mb.log:
 
-/tmp/.tmp7Z3aac/unknown-e2e.log:
+/tmp/.tmpSqDpSH/unknown-e2e.log:
 
-/tmp/.tmp7Z3aac/settings.log:
+/tmp/.tmpSqDpSH/settings.log:
 CJK font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 
-/tmp/.tmp7Z3aac/tray.log:
+/tmp/.tmpSqDpSH/tray.log:
 CJK font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 
-/tmp/.tmp7Z3aac/first-run-daemon.log:
+/tmp/.tmpSqDpSH/first-run-daemon.log:
 CleanCopy tray: no StatusNotifier host (Error(Watcher(ServiceUnknown("The name org.kde.StatusNotifierWatcher was not provided by any .service files")))); daemon continues
 CleanCopy Linux hotkey ready
 CleanCopy Linux hotkey ready
 CJK font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 
-/tmp/.tmp7Z3aac/full-5mb.log:
+/tmp/.tmpSqDpSH/full-5mb.log:
 
-/tmp/.tmp7Z3aac/preview.log:
+/tmp/.tmpSqDpSH/preview.log:
 CJK font: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
 
-/tmp/.tmp7Z3aac/background-cancel.log:
+/tmp/.tmpSqDpSH/background-cancel.log:
 
-/tmp/.tmp7Z3aac/WINWORD.EXE.log:
+/tmp/.tmpSqDpSH/WINWORD.EXE.log:
 
 ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.96s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.18s
 
 
-(xfconfd:570302): xfconfd-WARNING **: 14:08:36.875: Name org.xfce.Xfconf lost on the message dbus, exiting.
+(xfconfd:607228): xfconfd-WARNING **: 14:19:13.820: Name org.xfce.Xfconf lost on the message dbus, exiting.

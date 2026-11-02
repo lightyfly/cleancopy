@@ -8,7 +8,10 @@ use crate::config::Config;
 use cleancopy_core::render_numbered;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
 
-pub const SIZE: Vec2 = Vec2::new(480.0, 360.0);
+const TRY_INPUT: &str = "onboarding_try_input";
+
+/// Content size; 44 px shorter off macOS, where the native title bar replaces the strip.
+pub const SIZE: Vec2 = Vec2::new(480.0, 316.0 + super::TITLE_STRIP);
 pub const STEPS: usize = 3;
 const LINE: Color32 = Color32::from_rgb(230, 230, 234);
 pub const SAMPLE: &str = "# 项目周报\n## 本周进展\n- 完成 **剪贴板监听**\n- 接入 Word 富文本";
@@ -166,7 +169,7 @@ impl OnboardingState {
             self.permission = permission_status();
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
-        let input_id = egui::Id::new("onboarding_try_input");
+        let input_id = egui::Id::new(TRY_INPUT);
         if self.step == 2 && ctx.memory(|m| m.has_focus(input_id)) {
             let mut hit = false;
             ctx.input_mut(|input| {
@@ -224,19 +227,7 @@ impl OnboardingState {
                 ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                 let origin = ui.max_rect().min;
                 let size = ui.max_rect().size();
-                let title = egui::Rect::from_min_size(origin, Vec2::new(size.x, 44.0));
-                ui.painter().text(
-                    title.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "欢迎使用 CleanCopy",
-                    FontId::proportional(13.0),
-                    TEXT,
-                );
-                // Traffic-light buttons only on macOS; Linux/Windows use
-                // native window decorations (report v4 M-6).
-                super::paint_mac_window_buttons(ui, origin);
-                ui.painter()
-                    .hline(title.x_range(), title.bottom(), Stroke::new(1.0_f32, LINE));
+                super::paint_title_strip(ui, origin, size.x, "欢迎使用 CleanCopy");
                 let footer = egui::Rect::from_min_max(
                     egui::pos2(origin.x, origin.y + size.y - 52.0),
                     origin + size,
@@ -244,7 +235,7 @@ impl OnboardingState {
                 ui.painter()
                     .hline(footer.x_range(), footer.top(), Stroke::new(1.0_f32, LINE));
                 let body = egui::Rect::from_min_max(
-                    egui::pos2(origin.x, title.bottom()),
+                    egui::pos2(origin.x, origin.y + super::TITLE_STRIP),
                     egui::pos2(origin.x + size.x, footer.top()),
                 )
                 .shrink2(Vec2::new(28.0, 18.0));
@@ -309,6 +300,17 @@ impl OnboardingState {
     }
     /// The try-it step needs the hotkey delivered to this window, so the
     /// daemon's global grab must be paused while it is shown.
+    /// A hotkey press delivered outside egui (Linux X11 grab) while this
+    /// window is focused: format into the try box, focusing it if needed.
+    pub fn native_hotkey(&mut self, ctx: &egui::Context, config: &Config) {
+        if self.step != 2 {
+            return;
+        }
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new(TRY_INPUT)));
+        self.try_paste(config);
+        ctx.request_repaint();
+    }
+
     pub fn wants_hotkey_pause(&self) -> bool {
         self.step == 2
     }
@@ -609,6 +611,31 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     fn non_macos_needs_no_permission() {
         assert_eq!(permission_status(), Permission::NotRequired);
+    }
+
+    #[test]
+    fn native_hotkey_formats_only_on_the_try_step_and_focuses_the_box() {
+        let ctx = egui::Context::default();
+        let config = Config::default();
+        let mut state = OnboardingState::default();
+        for step in 0..2 {
+            state.step = step;
+            state.native_hotkey(&ctx, &config);
+            assert!(!state.tried && state.input.is_empty(), "step {step}");
+        }
+        state.step = 2;
+        // Fast press: no egui key/paste event and no modifiers held this frame.
+        state.native_hotkey(&ctx, &config);
+        state.native_hotkey(&ctx, &config);
+        assert!(state.tried);
+        assert_eq!(
+            state.input.matches("一、本周进展").count(),
+            2,
+            "{}",
+            state.input
+        );
+        assert!(!state.input.contains("**"));
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new(TRY_INPUT))));
     }
 
     #[test]

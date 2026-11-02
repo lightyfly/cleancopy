@@ -47,3 +47,8 @@ Built from commit 358232c2296f6979b24384b42d8b27a7a90a4080 with `dist build --ar
 Built from commit e4c6af4ebc4d712d408fd7c97a293d611a1c4b8a with `dist build --artifacts=local --target x86_64-unknown-linux-gnu`.
 - cleancopy-cli-x86_64-unknown-linux-gnu.tar.xz: d8e23e1badc37f261ecfa35cb86e786cf29d6f1921f0ed8ee90b21473b257bd1
 - cleancopy-desktop-x86_64-unknown-linux-gnu.tar.xz: 7b7a1d696c142e59af169ba73015f5355ab57db54949a91587c7d81c8a407731
+
+## Rebuild 2026-11-02 11:12 (UTC+8)
+Built from commit 0513dcd1797b63d8243ed335f29c6c80b9e4bcb9 with `dist build --artifacts=local --target x86_64-unknown-linux-gnu`.
+- cleancopy-cli-x86_64-unknown-linux-gnu.tar.xz: 604e4c2f297ad7708faa9e6cd7eb7f5e565fe26e378886706d84b802b150829e
+- cleancopy-desktop-x86_64-unknown-linux-gnu.tar.xz: e1512ec1743565cd8e219d52e76374874d74fd8a72d255b55e21c711674020ab

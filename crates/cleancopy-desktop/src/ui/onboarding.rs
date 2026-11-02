@@ -166,13 +166,23 @@ impl OnboardingState {
         if self.step == 2 && ctx.memory(|m| m.has_focus(input_id)) {
             let mut hit = false;
             ctx.input_mut(|input| {
-                // egui-winit turns a Ctrl/⌘+Shift+V press into `Event::Paste`
-                // (and drops the key event), so treat a paste made with the
-                // hotkey's modifiers held as the hotkey too.
-                let paste_is_hotkey = recorded_hotkey(egui::Key::V, input.modifiers)
-                    .is_some_and(|h| same_hotkey(&h, &config.hotkey));
+                // egui-winit turns any Ctrl/⌘(+…)+V / C / X press into
+                // `Paste` / `Copy` / `Cut` and drops the key event, so map those
+                // back to their key with the modifiers held this frame.
+                let mods = input.modifiers;
+                let is_hotkey = |key| {
+                    recorded_hotkey(key, mods).is_some_and(|h| same_hotkey(&h, &config.hotkey))
+                };
                 input.events.retain(|event| match event {
-                    egui::Event::Paste(_) if paste_is_hotkey => {
+                    egui::Event::Paste(_) if is_hotkey(egui::Key::V) => {
+                        hit = true;
+                        false
+                    }
+                    egui::Event::Copy if is_hotkey(egui::Key::C) => {
+                        hit = true;
+                        false
+                    }
+                    egui::Event::Cut if is_hotkey(egui::Key::X) => {
                         hit = true;
                         false
                     }
@@ -374,7 +384,7 @@ impl OnboardingState {
     }
 
     fn step_try(&mut self, ui: &mut egui::Ui, config: &Config, input_id: egui::Id) {
-        let keys = hotkey_labels(&config.hotkey).join(" ");
+        let keys = hotkey_text(&config.hotkey);
         ui.label(RichText::new("试一试").size(15.0));
         ui.label(
             RichText::new(format!(
@@ -391,40 +401,51 @@ impl OnboardingState {
                 .inner_margin(8.0)
                 .show(ui, |ui| {
                     ui.set_width(160.0);
-                    ui.set_height(120.0);
+                    ui.set_height(TRY_BOX_HEIGHT);
                     ui.label(RichText::new(SAMPLE).monospace().size(11.0).color(SUB));
                 });
-            egui::Frame::new()
-                .stroke(Stroke::new(1.0_f32, if self.tried { ACCENT } else { LINE }))
-                .corner_radius(8.0)
-                .inner_margin(6.0)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("try_scroll")
-                        .max_height(120.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.input)
-                                    .id(input_id)
-                                    .frame(false)
-                                    .desired_width(212.0)
-                                    .desired_rows(6)
-                                    .hint_text(format!("在这里按 {keys}")),
-                            );
-                        });
-                });
+            ui.vertical(|ui| {
+                egui::Frame::new()
+                    .stroke(Stroke::new(1.0_f32, if self.tried { ACCENT } else { LINE }))
+                    .corner_radius(8.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("try_scroll")
+                            .max_height(TRY_BOX_HEIGHT + 4.0)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.input)
+                                        .id(input_id)
+                                        .frame(false)
+                                        .desired_width(212.0)
+                                        .desired_rows(5)
+                                        .hint_text(format!("在这里按 {keys}")),
+                                );
+                            });
+                    });
+                if self.tried {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new("✓").size(13.0).strong().color(SUCCESS));
+                        ui.label(
+                            RichText::new("已按「纯文本 · 中文序号」粘贴")
+                                .size(12.0)
+                                .color(SUCCESS),
+                        );
+                    });
+                }
+            });
         });
-        if self.tried {
-            ui.label(
-                RichText::new(
-                    "✓ 已按「纯文本 · 中文序号」粘贴。在其他 App 中按目标规则自动选择格式。",
-                )
-                .size(12.0)
-                .color(ACCENT),
-            );
-        }
     }
 }
+
+/// Height of the step-3 sample / result boxes; leaves room for the success
+/// hint plus a ≥12px gap above the footer bar.
+const TRY_BOX_HEIGHT: f32 = 100.0;
+/// Success green, 5.0:1 on white (WCAG AA).
+pub(crate) const SUCCESS: Color32 = Color32::from_rgb(21, 128, 61);
 
 fn step_usage(ui: &mut egui::Ui, config: &Config) {
     ui.label(RichText::new("复制，然后用快捷键粘贴").size(15.0));
@@ -434,9 +455,8 @@ fn step_usage(ui: &mut egui::Ui, config: &Config) {
         )
         .color(SUB),
     );
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.add_space(70.0);
         key_cap_wide(
             ui,
             if cfg!(target_os = "macos") {
@@ -450,18 +470,43 @@ fn step_usage(ui: &mut egui::Ui, config: &Config) {
             key_cap_wide(ui, &key);
         }
     });
-    ui.add_space(6.0);
-    const KEY_SEP: &str = if cfg!(target_os = "macos") { "" } else { "+" };
-    // The 首次使用 note lives here (removed from the settings page).
-    ui.label(
-        RichText::new(format!(
-            "首次使用：复制后按 {} 智能粘贴；{} 直接打开完整格式菜单，托盘图标也可打开。",
-            hotkey_labels(&config.hotkey).join(KEY_SEP),
-            hotkey_labels(&config.full_menu_hotkey).join(KEY_SEP),
-        ))
-        .size(12.0)
-        .color(MUTED),
+    ui.add_space(14.0);
+    for (hotkey, text) in [
+        (&config.hotkey, "智能粘贴"),
+        (&config.full_menu_hotkey, "打开完整菜单"),
+    ] {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for key in hotkey_labels(hotkey) {
+                small_key_cap(ui, &key);
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new(text).size(12.0).color(SUB));
+        });
+        ui.add_space(2.0);
+    }
+}
+
+/// Hotkey as text with `+` separators (macOS symbols run together, ⌘⇧V).
+pub(crate) fn hotkey_text(hotkey: &str) -> String {
+    hotkey_labels(hotkey).join(if cfg!(target_os = "macos") { "" } else { "+" })
+}
+
+fn small_key_cap(ui: &mut egui::Ui, text: &str) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), FontId::proportional(11.0), TEXT);
+    let width = (galley.size().x + 10.0).max(20.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        4.0,
+        Color32::from_rgb(247, 247, 248),
+        Stroke::new(1.0_f32, LINE),
+        egui::StrokeKind::Inside,
     );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, TEXT);
 }
 
 fn key_cap_wide(ui: &mut egui::Ui, text: &str) {
@@ -616,6 +661,95 @@ mod tests {
             assert_eq!(state.tried, formatted, "{modifiers:?}");
             assert_eq!(state.input.contains("# raw"), !formatted, "{}", state.input);
         }
+    }
+
+    /// Runs step 3 with the try-it input focused and returns whether the
+    /// final frame's events counted as the configured hotkey.
+    fn try_step_hit(hotkey: &str, modifiers: egui::Modifiers, event: egui::Event) -> bool {
+        let ctx = egui::Context::default();
+        let mut cfg = Config {
+            hotkey: hotkey.into(),
+            ..Config::default()
+        };
+        let mut state = OnboardingState {
+            step: 2,
+            ..Default::default()
+        };
+        for events in [vec![], vec![event]] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
+                    modifiers,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    ctx.memory_mut(|m| m.request_focus(egui::Id::new("onboarding_try_input")));
+                    state.show(ctx, &mut cfg);
+                },
+            );
+        }
+        state.tried
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn try_step_follows_a_non_v_configured_hotkey() {
+        use egui::{Key, Modifiers as M};
+        let ctrl_alt = M::CTRL | M::COMMAND | M::ALT;
+        let ctrl_shift = M::CTRL | M::COMMAND | M::SHIFT;
+        // Ordinary key event: Ctrl+Alt+K.
+        assert!(try_step_hit("Ctrl+Alt+K", ctrl_alt, key(Key::K, ctrl_alt)));
+        assert!(!try_step_hit(
+            "Ctrl+Alt+K",
+            ctrl_shift,
+            key(Key::K, ctrl_shift)
+        ));
+        assert!(!try_step_hit(
+            "Ctrl+Alt+K",
+            ctrl_shift,
+            key(Key::V, ctrl_shift)
+        ));
+        // The default V chord no longer triggers once the hotkey is K.
+        assert!(!try_step_hit(
+            "Ctrl+Alt+K",
+            ctrl_shift,
+            egui::Event::Paste("x".into())
+        ));
+        // Function key and a Copy-translated chord.
+        assert!(try_step_hit(
+            "Ctrl+Shift+F8",
+            ctrl_shift,
+            key(Key::F8, ctrl_shift)
+        ));
+        assert!(try_step_hit("Ctrl+Shift+C", ctrl_shift, egui::Event::Copy));
+        assert!(!try_step_hit("Ctrl+Shift+C", ctrl_shift, egui::Event::Cut));
+        assert!(try_step_hit("Ctrl+Shift+X", ctrl_shift, egui::Event::Cut));
+    }
+
+    #[test]
+    fn hotkey_text_uses_plus_separators() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(hotkey_text("Super+Shift+V"), "⌘⇧V");
+        } else {
+            assert_eq!(hotkey_text("Ctrl+Shift+V"), "Ctrl+Shift+V");
+            assert_eq!(hotkey_text("Ctrl+Alt+K"), "Ctrl+Alt+K");
+        }
+    }
+
+    #[test]
+    fn success_green_meets_aa_on_white() {
+        let ratio = super::super::palette::contrast(SUCCESS, Color32::WHITE);
+        assert!(ratio >= 4.5, "{ratio}");
     }
 
     #[test]

@@ -124,11 +124,16 @@ fn word_compatible_lists(html: &str) -> String {
                 }
             }
             ("ul", false) => {
-                // The bullet glyph is written as text (see `insert_bullets`):
-                // WPS maps disc/square to Symbol/Wingdings glyphs, which are
-                // blank when those fonts are missing (report v5 M-3).
+                // Real list markers (report v6 item 5): disc / circle /
+                // square by nesting depth, never glyphs inlined in the text.
+                let depth = stack.iter().filter(|o| matches!(o, Open::List)).count();
                 stack.push(Open::List);
-                out.push_str(&tag.replacen("<ul", "<ul style=\"list-style-type:none\"", 1));
+                let style = BULLET_STYLES[depth % BULLET_STYLES.len()];
+                out.push_str(&tag.replacen(
+                    "<ul",
+                    &format!("<ul style=\"list-style-type:{style}\""),
+                    1,
+                ));
             }
             ("ol", false) => {
                 stack.push(Open::List);
@@ -158,37 +163,8 @@ fn word_compatible_lists(html: &str) -> String {
             break;
         }
     }
-    insert_bullets(&out)
-}
-
-/// Unicode bullets by nesting depth (all lists count toward depth).
-const BULLETS: [&str; 3] = ["•", "◦", "▪"];
-
-/// Prefix every `<ul>` item with a font-independent Unicode bullet.
-fn insert_bullets(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() + html.len() / 8);
-    // true = <ul>, false = <ol>
-    let mut lists: Vec<bool> = Vec::new();
-    let mut rest = html;
-    while let Some(start) = rest.find('<') {
-        out.push_str(&rest[..start]);
-        let end = rest[start..]
-            .find('>')
-            .map_or(rest.len(), |e| start + e + 1);
-        let tag = &rest[start..end];
-        rest = &rest[end..];
-        out.push_str(tag);
-        if tag.starts_with("<ul") {
-            lists.push(true);
-        } else if tag.starts_with("<ol") {
-            lists.push(false);
-        } else if tag == "</ul>" || tag == "</ol>" {
-            lists.pop();
-        } else if tag == "<li>" && lists.last() == Some(&true) {
-            out.push_str(BULLETS[(lists.len() - 1) % BULLETS.len()]);
-            out.push_str("&nbsp;");
-        }
-    }
-    out.push_str(rest);
     out
 }
+
+/// Bullet marker styles by nesting depth (all lists count toward depth).
+const BULLET_STYLES: [&str; 3] = ["disc", "circle", "square"];

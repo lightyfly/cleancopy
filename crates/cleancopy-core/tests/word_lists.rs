@@ -23,11 +23,11 @@ fn loose_list_items_have_no_paragraphs_inside_li() {
 fn nested_lists_stay_inside_parent_li_with_explicit_types() {
     let html = render_word_html(LOOSE);
     let body = body(&html);
-    let expected = "<ol style=\"list-style-type:decimal\">\n<li><strong>性能</strong>：快<ul style=\"list-style-type:none\">\n<li>◦&nbsp;子项 A</li>\n<li>◦&nbsp;子项 B</li>\n</ul>\n</li>";
+    let expected = "<ol style=\"list-style-type:decimal\">\n<li><strong>性能</strong>：快<ul style=\"list-style-type:circle\">\n<li>子项 A</li>\n<li>子项 B</li>\n</ul>\n</li>";
     assert!(body.contains(expected), "{body}");
     // Bullets are bullets at every depth, never decimal.
     assert!(
-        body.contains("<li>深一\n<ul style=\"list-style-type:none\">\n<li>▪&nbsp;更深"),
+        body.contains("<li>深一\n<ul style=\"list-style-type:square\">\n<li>更深"),
         "{body}"
     );
     assert_eq!(
@@ -56,7 +56,7 @@ fn empty_list_items_are_dropped() {
 fn tight_lists_and_non_list_paragraphs_are_unchanged() {
     let html = render_word_html("para\n\n- a\n- b\n\nafter\n");
     assert!(
-        html.contains("<ul style=\"list-style-type:none\">"),
+        html.contains("<ul style=\"list-style-type:disc\">"),
         "{html}"
     );
     let body = body(&html);
@@ -64,35 +64,25 @@ fn tight_lists_and_non_list_paragraphs_are_unchanged() {
         body.contains("<p>para</p>") && body.contains("<p>after</p>"),
         "{body}"
     );
-    assert!(
-        body.contains("<li>•&nbsp;a</li>\n<li>•&nbsp;b</li>"),
-        "{body}"
-    );
+    assert!(body.contains("<li>a</li>\n<li>b</li>"), "{body}");
 }
 
 #[test]
-fn bullets_are_font_independent_unicode_glyphs() {
-    // Report v5 M-3: WPS draws disc/square from Symbol/Wingdings, which are
-    // blank when those fonts are missing; the glyph is text instead.
+fn bullets_are_real_list_markers_not_inline_glyphs() {
+    // Report v6 item 5: WPS gets real <ul>/<li> with CSS markers; no bullet
+    // characters are written into the item text.
     let html = render_word_html("- a\n  - b\n    - c\n      - d\n");
     let body = body(&html);
-    for marker in [
-        "<li>•&nbsp;a",
-        "<li>◦&nbsp;b",
-        "<li>▪&nbsp;c",
-        "<li>•&nbsp;d",
-    ] {
+    for marker in ["<li>a", "<li>b", "<li>c", "<li>d"] {
         assert!(body.contains(marker), "{marker}: {body}");
     }
-    for bad in [
-        "disc",
-        "circle",
-        "square",
-        "Symbol",
-        "Wingdings",
-        "mso-bullet",
-    ] {
+    for bad in ["•", "◦", "▪", "&nbsp;", "list-style-type:none"] {
         assert!(!body.contains(bad), "{bad}: {body}");
     }
-    assert_eq!(body.matches("list-style-type:none").count(), 4, "{body}");
+    let styles: Vec<&str> = body
+        .match_indices("<ul style=\"list-style-type:")
+        .map(|(i, m)| body[i + m.len()..].split('"').next().unwrap())
+        .collect();
+    assert_eq!(styles, ["disc", "circle", "square", "disc"], "{body}");
+    assert_eq!(body.matches("<li>").count(), 4, "{body}");
 }

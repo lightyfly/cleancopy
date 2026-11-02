@@ -36,9 +36,9 @@ fn headings_reset_descendants_and_titles_reset_document() {
 fn deep_lists_and_sibling_resets_in_all_styles() {
     let input = "- a\n  - b\n    - c\n      - d\n        - e\n      - f\n    - g\n  - h\n- i";
     for (style, expected) in [
-        (NumberingStyle::Chinese, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
-        (NumberingStyle::ChineseCompact, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
-        (NumberingStyle::Decimal, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
+        (NumberingStyle::Chinese, "1. a\n    （1）b\n        ①c\n            • d\n                • e\n            • f\n        ②g\n    （2）h\n2. i"),
+        (NumberingStyle::ChineseCompact, "1. a\n    （1）b\n        ①c\n            • d\n                • e\n            • f\n        ②g\n    （2）h\n2. i"),
+        (NumberingStyle::Decimal, "1. a\n    （1）b\n        ①c\n            • d\n                • e\n            • f\n        ②g\n    （2）h\n2. i"),
     ] { assert_eq!(render_numbered(input, style), expected); }
     assert_eq!(
         render_numbered("9. a\n10. b\n\nparagraph\n\n- c", NumberingStyle::Decimal),
@@ -119,10 +119,10 @@ fn single_leading_h1_is_title_and_multiple_h1s_are_numbered() {
         render_numbered("intro\n# A\n## B", NumberingStyle::Chinese),
         "intro\n\n一、A\n\n（一）B"
     );
-    // Decimal is unchanged: H1 always unnumbered.
+    // Decimal: H1 always unnumbered, H5+ unnumbered (bold in rich output).
     assert_eq!(
         render_numbered(multi, NumberingStyle::Decimal),
-        "A\n\n1. B\n\n1.1 C\n\n1.1.1 D\n（1）l\n\n1.1.1.1 E\n\nA2\n\n1. B2"
+        "A\n\n1. B\n\n1.1 C\n\n1.1.1 D\n（1）l\n\nE\n\nA2\n\n1. B2"
     );
 }
 
@@ -146,7 +146,8 @@ fn lists_never_count_toward_heading_numbering_or_repeat_a_scheme() {
         NumberingStyle::ChineseCompact,
         NumberingStyle::Decimal,
     ] {
-        let out = render_numbered("#### H\n- a\n  - b\n    - c", style);
+        // Two levels: the ladder ends in a repeating `•`.
+        let out = render_numbered("#### H\n- a\n  - b", style);
         let markers: Vec<String> = out
             .lines()
             .skip(1)
@@ -238,7 +239,7 @@ fn unnumbered_deep_headings_are_standalone_standalone_paragraphs() {
 fn decimal_lists_continue_across_paragraphs_and_reset_at_headings() {
     assert_eq!(
         render_numbered("## A\n1. first\n\nparagraph\n\n1. second\n   - child\n\n## B\n1. third\n\n# New\n1. fourth", NumberingStyle::Decimal),
-        "1. A\n（1）first\n\nparagraph\n\n（2）second\n    ①child\n\n2. B\n（1）third\n\nNew\n1. fourth"
+        "1. A\n（1）first\n\nparagraph\n\n（2）second\n    ①child\n\n2. B\n（1）third\n\nNew\n（1）fourth"
     );
     assert_eq!(
         render_numbered(
@@ -265,4 +266,34 @@ fn serialization_names_and_default_are_stable() {
         );
     }
     assert!(serde_json::from_str::<NumberingStyle>("\"Chinese\"").is_err());
+}
+
+#[test]
+fn list_base_is_global_to_the_deepest_heading_scheme() {
+    // Report v5 N-4: a list under H3 directly followed by an H4 must not share
+    // the H4's `1.` / `（1）` shape.
+    let input = "# 标题\n## 二级\n### 三级\n1. 步骤一\n2. 步骤二\n#### 四级\n- 项";
+    assert_eq!(
+        render_numbered(input, NumberingStyle::Chinese),
+        "标题\n\n一、二级\n\n（一）三级\n（1）步骤一\n（2）步骤二\n\n1. 四级\n（1）项"
+    );
+    assert_eq!(
+        render_numbered(input, NumberingStyle::ChineseCompact),
+        "标题\n\n一、二级\n\n1. 三级\n①步骤一\n②步骤二\n\n（1）四级\n①项"
+    );
+    // Global, not per section: the first section's list already starts below
+    // the `1.` used by a later H4, and the ladder continues （1）→①→•.
+    let input = "## 甲\n- a\n  - b\n    - c\n## 乙\n### 丙\n#### 丁";
+    assert_eq!(
+        render_numbered(input, NumberingStyle::Chinese),
+        "一、甲\n（1）a\n    ①b\n        • c\n\n二、乙\n\n（一）丙\n\n1. 丁"
+    );
+    // Decimal: H2–H4 numbered, H5+ unnumbered, lists below `1.`.
+    assert_eq!(
+        render_numbered(
+            "## A\n### B\n#### C\n##### D\n###### E\n- l",
+            NumberingStyle::Decimal
+        ),
+        "1. A\n\n1.1 B\n\n1.1.1 C\n\nD\n\nE\n（1）l"
+    );
 }

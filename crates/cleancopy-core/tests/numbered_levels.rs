@@ -40,7 +40,7 @@ enum Form {
     Paren,        // （1）
     Circled,      // ①
     Alpha,        // a.
-    Bullet,       // ·
+    Bullet,       // •
     Path(usize),  // 1.1 / 1.1.1 (segment count)
     None,
 }
@@ -48,7 +48,7 @@ enum Form {
 fn form(line: &str) -> Form {
     let t = line.trim_start();
     let first = t.chars().next().unwrap_or(' ');
-    if t.starts_with("· ") {
+    if t.starts_with("• ") {
         return Form::Bullet;
     }
     if ('\u{2460}'..='\u{2473}').contains(&first) || ('\u{3251}'..='\u{32bf}').contains(&first) {
@@ -90,33 +90,37 @@ fn check(blocks: &[Block], style: NumberingStyle) -> Result<(), TestCaseError> {
     let mut md = String::new();
     // (outline level, is heading H4+, kind) per rendered line.
     let mut expected: Vec<(Option<usize>, bool, bool)> = Vec::new();
-    let mut deepest = 0usize; // deepest numbered heading level in the chain
     let h1s = blocks
         .iter()
         .filter(|b| matches!(b, Block::Heading(1)))
         .count();
     let title = h1s == 1 && matches!(blocks.first(), Some(Block::Heading(1)));
     let offset = usize::from(title || h1s == 0);
+    let numbered = |h: u8| -> Option<usize> {
+        let level = match style {
+            NumberingStyle::Decimal => usize::from(h) - 1,
+            _ => usize::from(h).checked_sub(offset)?,
+        };
+        (1..=3).contains(&level).then_some(level)
+    };
+    // Lists start below the deepest numbered heading anywhere (design.md §7.1).
+    let deepest = blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::Heading(h) => numbered(*h),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
     for b in blocks {
         match b {
             Block::Heading(h) => {
                 md.push_str(&format!("{} h\n\n", "#".repeat(usize::from(*h))));
-                let level = match style {
-                    NumberingStyle::Decimal => usize::from(*h) - 1,
-                    _ if usize::from(*h) - offset > 3 => {
-                        expected.push((None, true, true));
-                        continue;
-                    }
-                    _ if usize::from(*h) == offset => {
-                        // The document title: unnumbered, resets the chain.
-                        deepest = 0;
-                        expected.push((None, true, true));
-                        continue;
-                    }
-                    _ => usize::from(*h) - offset,
+                let Some(level) = numbered(*h) else {
+                    expected.push((None, true, true));
+                    continue;
                 };
-                deepest = level;
-                expected.push(((level > 0).then_some(level), false, true));
+                expected.push((Some(level), false, true));
             }
             Block::Paragraph => {
                 md.push_str("p\n\n");
@@ -205,7 +209,7 @@ fn report_v4_numbering_sample_has_no_repeats() {
     let out = render_numbered(md, NumberingStyle::Chinese);
     assert_eq!(
         out,
-        "文档标题\n1. 顶层A\n\n一、第一章\n1. 甲\n    （1）乙1\n\n（一）小节一\n1. 步骤一\n2. 步骤二\n\n1. 细则一\n（1）细项\n    ①细子项\n\n子则\n（1）深项\n\n（二）小节二\n1. 列表后紧跟小标题\n\n1. 紧跟的四级\n（1）四级下列表"
+        "文档标题\n（1）顶层A\n\n一、第一章\n（1）甲\n    ①乙1\n\n（一）小节一\n（1）步骤一\n（2）步骤二\n\n1. 细则一\n（1）细项\n    ①细子项\n\n子则\n（1）深项\n\n（二）小节二\n（1）列表后紧跟小标题\n\n1. 紧跟的四级\n（1）四级下列表"
     );
     let compact = render_numbered(md, NumberingStyle::ChineseCompact);
     assert!(!compact.contains("1.1.1"), "{compact}");

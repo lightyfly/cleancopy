@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 2f549ff20f8a7d037b423c36f388154fba50bbffed3f77378cdf82ee184def58 # shrinks to blocks = [Heading(4)]
+cc d072c65b3fcf1983e3769301aac2e80d4b291f7b17195c7e687daeaa70ac8d5a # shrinks to blocks = [Heading(5)]

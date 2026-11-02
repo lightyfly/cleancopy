@@ -30,8 +30,10 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
     // first numbered level; with several H1s (or one that is not first) H1 is
     // numbered. A document without any H1 numbers from H2 like the title case.
     let offset = usize::from(parse::title_heading(root).is_some() || parse::has_no_h1(root));
+    let list_base = document_list_base(root, style, offset);
     let mut renderer = Renderer {
         offset,
+        list_base,
         style,
         headings: vec![],
         heading_level: 0,
@@ -43,6 +45,9 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
 struct Renderer {
     /// 1 when H1 is the document title (or absent), else 0.
     offset: usize,
+    /// First list-ladder rung for every list in the document: one below the
+    /// deepest heading numbering scheme used anywhere (design.md §7.1).
+    list_base: usize,
     style: NumberingStyle,
     headings: Vec<usize>,
     heading_level: usize,
@@ -50,16 +55,6 @@ struct Renderer {
 }
 
 impl Renderer {
-    /// First list-ladder rung below every scheme the current heading chain
-    /// already uses, so a list never repeats its heading's numbering scheme.
-    fn list_base(&self) -> usize {
-        (1..=self.headings.len())
-            .filter_map(|level| heading_rung(self.style, level))
-            .map(|rung| rung + 1)
-            .max()
-            .unwrap_or(0)
-    }
-
     fn blocks<'a>(&mut self, node: &'a AstNode<'a>) -> String {
         let mut out = String::new();
         let mut previous_heading = false;
@@ -90,19 +85,12 @@ impl Renderer {
         match &node.data.borrow().value {
             NodeValue::Heading(h) => {
                 self.next_list = 1;
-                let level = if self.style == NumberingStyle::Decimal {
-                    // Decimal: H1 is the unnumbered document title.
-                    usize::from(h.level).saturating_sub(1)
-                } else {
-                    // Chinese styles number three heading levels below the
-                    // title (design.md §7.1); deeper headings stay standalone,
-                    // unnumbered paragraphs and do not change the outline, so
-                    // their lists follow the numbered chain.
-                    let level = usize::from(h.level).saturating_sub(self.offset);
-                    if level > 3 {
-                        return inline(node);
-                    }
-                    level
+                // Numbered heading levels (design.md §7.1): Chinese styles
+                // number three levels below the title, Decimal H2–H4 (H1 is
+                // its title). Deeper headings are standalone unnumbered
+                // paragraphs that do not change the outline.
+                let Some(level) = numbered_level(self.style, h.level, self.offset) else {
+                    return inline(node);
                 };
                 self.heading_level = level;
                 if level == 0 {
@@ -164,7 +152,7 @@ impl Renderer {
                 let indent = "    ".repeat(path.len());
                 let mut out = format!(
                     "{indent}{}",
-                    list_marker(self.list_base() + path.len(), start + index)
+                    list_marker(self.list_base + path.len(), start + index)
                 );
                 let mut first = true;
                 let mut next_nested = 1;
@@ -212,10 +200,37 @@ impl Renderer {
     }
 }
 
+/// Outline level a heading is numbered at (0 = unnumbered title), or `None`
+/// for a deeper, unnumbered heading.
+fn numbered_level(style: NumberingStyle, heading: u8, offset: usize) -> Option<usize> {
+    let level = if style == NumberingStyle::Decimal {
+        usize::from(heading).saturating_sub(1)
+    } else {
+        usize::from(heading).saturating_sub(offset)
+    };
+    (level <= 3).then_some(level)
+}
+
+/// List base for the whole document: the rung after the deepest heading
+/// scheme any outline heading uses, so no list ever shares a marker shape
+/// with a heading (e.g. headings reach `1.` → every list starts at （1）).
+fn document_list_base<'a>(root: &'a AstNode<'a>, style: NumberingStyle, offset: usize) -> usize {
+    root.children()
+        .filter_map(|node| match &node.data.borrow().value {
+            NodeValue::Heading(h) => numbered_level(style, h.level, offset),
+            _ => None,
+        })
+        .filter(|&level| level > 0)
+        .filter_map(|level| heading_rung(style, level))
+        .map(|rung| rung + 1)
+        .max()
+        .unwrap_or(0)
+}
+
 /// List numbering ladder (design.md「中文序号规则」): lists never take the
-/// heading-owned 一、/（一） levels. Level 1 = `1.`, level 2 = `（1）`,
-/// level 3 = `①`, then `a.`; deeper levels fall back to `·` bullets.
-const LIST_LADDER: usize = 4;
+/// heading-owned 一、/（一） levels. Rungs: `1.` → `（1）` → `①` → `•`
+/// (all deeper levels stay `•`).
+const LIST_LADDER: usize = 3;
 
 fn list_marker(rung: usize, n: usize) -> String {
     match rung {
@@ -223,8 +238,7 @@ fn list_marker(rung: usize, n: usize) -> String {
         1 => format!("（{n}）"),
         2 if n <= 50 => circled(n),
         2 => format!("{n}) "),
-        3 => format!("{}. ", alphabetic(n)),
-        _ => "· ".into(),
+        _ => "• ".into(),
     }
 }
 
@@ -306,16 +320,6 @@ fn chinese(n: usize) -> String {
         out.push_str(suffix);
     }
     out
-}
-
-fn alphabetic(mut n: usize) -> String {
-    let mut letters = Vec::new();
-    while n > 0 {
-        n -= 1;
-        letters.push((b'a' + (n % 26) as u8) as char);
-        n /= 26;
-    }
-    letters.into_iter().rev().collect()
 }
 
 fn inline<'a>(node: &'a AstNode<'a>) -> String {

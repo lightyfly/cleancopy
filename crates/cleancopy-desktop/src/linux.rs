@@ -966,6 +966,7 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 frames: 0,
                 last_sync: Instant::now(),
                 last_x_activity: Instant::now(),
+                last_frame: Instant::now(),
             };
             if !app.driver.engine.config().onboarding_done {
                 // First launch: show onboarding; it persists the flag itself.
@@ -1001,6 +1002,7 @@ struct LinuxApp {
     tray: Option<ksni::blocking::Handle<NativeTray>>,
     actions: std::sync::mpsc::Receiver<crate::ui::menus::TrayAction>,
     last_x_activity: Instant,
+    last_frame: Instant,
     enabled: bool,
     settings_child: Option<std::process::Child>,
     quitting: bool,
@@ -1101,6 +1103,7 @@ impl Drop for LinuxApp {
 impl eframe::App for LinuxApp {
     fn update(&mut self, ctx: &eframe::egui::Context, _: &mut eframe::Frame) {
         use eframe::egui;
+        let frame_started = Instant::now();
         match self.driver.poll() {
             // x11rb may buffer further events while answering requests in
             // this frame, out of sight of the socket waker: poll again soon.
@@ -1143,6 +1146,12 @@ impl eframe::App for LinuxApp {
                         .stack_mode(xproto::StackMode::ABOVE),
                 );
                 let _ = p.conn.map_window(self.window);
+                // Latency breakdown for the menu path (report v3 O-1).
+                eprintln!(
+                    "CleanCopy menu mapped {:.1} ms into its frame (since last frame {:.1} ms)",
+                    frame_started.elapsed().as_secs_f64() * 1e3,
+                    self.last_frame.elapsed().as_secs_f64() * 1e3,
+                );
             } else {
                 let _ = p.conn.unmap_window(self.window);
             }
@@ -1228,6 +1237,7 @@ impl eframe::App for LinuxApp {
                 self.settings_child = None;
             }
         }
+        self.last_frame = Instant::now();
         // Only animate/poll quickly while something is actually happening.
         let busy = self.shown.is_some()
             || self.driver.engine.next_deadline().is_some()

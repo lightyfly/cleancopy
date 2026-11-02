@@ -32,10 +32,10 @@ struct Block {
 /// Convert an HTML clipboard payload to Markdown, preserving code blocks.
 pub fn html_to_markdown(raw: &str) -> String {
     let mut blocks = Vec::new();
-    let lifted = lift_code_blocks(raw, &mut blocks);
+    let lifted = protect_nbsp(&lift_code_blocks(raw, &mut blocks));
     // Code is still behind placeholders here, so heading rewrites cannot
     // touch fenced code.
-    let mut markdown = atx_headings(&html2md::parse_html(&lifted));
+    let mut markdown = atx_headings(&html2md::parse_html(&lifted)).replace(NBSP_MARK, "\u{a0}");
     for (index, block) in blocks.iter().enumerate() {
         let fence = fence_for(&block.code);
         let mut code = block.code.clone();
@@ -46,6 +46,23 @@ pub fn html_to_markdown(raw: &str) -> String {
         markdown = markdown.replacen(&placeholder(index), &fenced, 1);
     }
     markdown
+}
+
+/// Private-use stand-in for a non-breaking space while html2md runs: it
+/// collapses `&nbsp;` runs into one space and trims a trailing one, but every
+/// `&nbsp;` is a space the author typed on purpose (report v5 N-7).
+const NBSP_MARK: char = '\u{10fffd}';
+
+fn protect_nbsp(html: &str) -> String {
+    let mut out = html.replace('\u{a0}', &NBSP_MARK.to_string());
+    for entity in [
+        "&nbsp;", "&#160;", "&#xa0;", "&#xA0;", "&#x00a0;", "&#x00A0;",
+    ] {
+        if out.contains(entity) {
+            out = out.replace(entity, &NBSP_MARK.to_string());
+        }
+    }
+    out
 }
 
 /// Number of characters a reader sees: tags, comments, scripts and styles are
@@ -489,6 +506,30 @@ mod tests {
         let md = html_to_markdown("<p>use <code>cargo</code> now</p>");
         assert!(md.contains("`cargo`"), "{md}");
         assert!(!md.contains("```"), "{md}");
+    }
+
+    #[test]
+    fn nbsp_runs_are_kept_one_space_each() {
+        // Report v5 N-7: `&nbsp;` runs must not collapse, a trailing one must
+        // not be trimmed; results match Python's html.unescape.
+        for (html, md) in [
+            (
+                "<p>研发&nbsp;&nbsp;&nbsp;测试</p>",
+                "研发\u{a0}\u{a0}\u{a0}测试",
+            ),
+            ("<p>研发测试&nbsp;</p>", "研发测试\u{a0}"),
+            ("<p>&nbsp;研发</p>", "\u{a0}研发"),
+            ("<p>a&#160;&#xA0;\u{a0}b</p>", "a\u{a0}\u{a0}\u{a0}b"),
+            ("<p>中&nbsp;文</p>", "中\u{a0}文"),
+        ] {
+            let out = html_to_markdown(html);
+            assert_eq!(out, md, "{html}");
+            assert_eq!(
+                cleancopy_core::render_plain(&out).trim_end_matches('\n'),
+                md,
+                "{html}"
+            );
+        }
     }
 
     #[test]

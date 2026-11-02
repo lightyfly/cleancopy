@@ -16,6 +16,19 @@ struct Harness {
     display: String,
     bin: PathBuf,
     root: PathBuf,
+    /// Screenshot output: `target/e2e-screenshots` by default; tracked
+    /// `docs/screenshots` only with `CLEANCOPY_UPDATE_SCREENSHOTS=1`
+    /// (`scripts/e2e-desktop.sh --update-screenshots`).
+    shots: PathBuf,
+}
+fn screenshot_dir(root: &Path) -> PathBuf {
+    let dir = if std::env::var_os("CLEANCOPY_UPDATE_SCREENSHOTS").is_some_and(|v| v == "1") {
+        root.join("docs/screenshots")
+    } else {
+        root.join("target/e2e-screenshots")
+    };
+    fs::create_dir_all(&dir).unwrap();
+    dir
 }
 fn wait(label: &str, mut f: impl FnMut() -> bool) {
     let start = Instant::now();
@@ -171,7 +184,7 @@ impl Harness {
         (id, elapsed)
     }
     fn shot(&self, name: &str) {
-        let path = self.root.join(format!("docs/screenshots/e2e-{name}.png"));
+        let path = self.shots.join(format!("e2e-{name}.png"));
         // xfwm4 composites redirected windows, so a root GetImage omits the
         // menu. Capture the menu window itself whenever one is mapped.
         let mut command = Command::new(self.bin.join("examples/screenshot"));
@@ -336,6 +349,7 @@ fn desktop_runtime_matrix() {
         dir,
         display: String::new(),
         bin,
+        shots: screenshot_dir(&root),
         root,
     };
     wait("Xvfb display", || {
@@ -702,7 +716,7 @@ fn desktop_runtime_matrix() {
     thread::sleep(Duration::from_millis(500));
     let id = window.to_string();
     let capture = |n: usize| {
-        let path = h.root.join(format!("docs/screenshots/onboarding-{n}.png"));
+        let path = h.shots.join(format!("onboarding-{n}.png"));
         assert!(Command::new(h.bin.join("examples/screenshot"))
             .env("DISPLAY", &h.display)
             .arg(&path)

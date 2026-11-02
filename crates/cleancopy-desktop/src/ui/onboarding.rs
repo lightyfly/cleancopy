@@ -419,7 +419,7 @@ impl OnboardingState {
                                         .id(input_id)
                                         .frame(false)
                                         .desired_width(212.0)
-                                        .desired_rows(5)
+                                        .desired_rows(4)
                                         .hint_text(format!("在这里按 {keys}")),
                                 );
                             });
@@ -443,7 +443,7 @@ impl OnboardingState {
 
 /// Height of the step-3 sample / result boxes; leaves room for the success
 /// hint plus a ≥12px gap above the footer bar.
-const TRY_BOX_HEIGHT: f32 = 100.0;
+const TRY_BOX_HEIGHT: f32 = 96.0;
 /// Success green, 5.0:1 on white (WCAG AA).
 pub(crate) const SUCCESS: Color32 = Color32::from_rgb(21, 128, 61);
 

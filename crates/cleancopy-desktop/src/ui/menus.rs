@@ -230,10 +230,24 @@ impl MenuState {
                         Vec2::new(54.0, 24.0),
                     );
                     text(ui, cancel.left_center(), "取消", 12.0, ACCENT);
-                    if ui
+                    // Hit-test the raw press position instead of egui's hover
+                    // state: when the menu maps under a still pointer, a single
+                    // move + click arrive in one frame and `clicked()` can miss
+                    // it (report v3 B-2). Cancelling on press is intentional.
+                    let pressed_here = ctx.input(|input| {
+                        input.events.iter().any(|event| {
+                            matches!(event, egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed: true,
+                                ..
+                            } if cancel.contains(*pos))
+                        })
+                    });
+                    let clicked = ui
                         .interact(cancel, ui.id().with("cancel-conversion"), Sense::click())
-                        .clicked()
-                    {
+                        .clicked();
+                    if (pressed_here || clicked) && !events.contains(&Event::Cancel { t: TIME }) {
                         events.push(Event::Cancel { t: TIME });
                     }
                     ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -1192,9 +1206,49 @@ mod tests {
                 },
                 |ctx| events = state.show(ctx, &model, false),
             );
-            if !pressed {
+            if pressed {
                 assert_eq!(events, vec![Event::Cancel { t: TIME }]);
             }
+        }
+    }
+
+    /// Report v3 B-2: the menu maps under the pointer and the very first
+    /// input is one move plus a click, all in one frame on a fresh context
+    /// (no hover from an earlier frame). Also without any move at all.
+    #[test]
+    fn cancel_works_with_single_move_then_click_and_no_prior_hover() {
+        let mut model = render_model();
+        model.converting = true;
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0));
+        let pos = Pos2::new(300.0, 200.0);
+        let click = |moved: bool| {
+            let mut input = Vec::new();
+            if moved {
+                input.push(egui::Event::PointerMoved(pos));
+            }
+            for pressed in [true, false] {
+                input.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            input
+        };
+        for moved in [true, false] {
+            let ctx = egui::Context::default();
+            let mut state = MenuState::default();
+            let mut events = Vec::new();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events: click(moved),
+                    ..Default::default()
+                },
+                |ctx| events = state.show(ctx, &model, false),
+            );
+            assert_eq!(events, vec![Event::Cancel { t: TIME }], "moved={moved}");
         }
     }
 

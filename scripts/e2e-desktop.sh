@@ -7,6 +7,8 @@ printf 'CleanCopy desktop E2E %s\n' "$(date -Is)"
 for tool in cargo Xvfb xfwm4 xdotool dbus-run-session; do
   command -v "$tool" >/dev/null || { printf 'Missing dependency: %s\n' "$tool"; exit 1; }
 done
+# Screenshots go to target/e2e-screenshots unless --update-screenshots is given.
+if [[ "${1:-}" == "--update-screenshots" ]]; then export CLEANCOPY_UPDATE_SCREENSHOTS=1; fi
 cargo build -p cleancopy-desktop --bin cleancopy-app --example target --example screenshot
 # A Rust ignored integration test is the process-driving harness, not a unit test.
 dbus-run-session -- cargo test -p cleancopy-desktop --test desktop_e2e -- --ignored --nocapture --test-threads=1

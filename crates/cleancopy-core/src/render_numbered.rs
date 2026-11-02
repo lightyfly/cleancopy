@@ -41,6 +41,16 @@ struct Renderer {
 }
 
 impl Renderer {
+    /// First list-ladder rung below every scheme the current heading chain
+    /// already uses, so a list never repeats its heading's numbering scheme.
+    fn list_base(&self) -> usize {
+        (1..=self.headings.len())
+            .filter_map(|level| heading_rung(self.style, level))
+            .map(|rung| rung + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
     fn blocks<'a>(&mut self, node: &'a AstNode<'a>) -> String {
         let mut out = String::new();
         let mut previous_heading = false;
@@ -129,10 +139,11 @@ impl Renderer {
             .map(|(index, item)| {
                 let mut item_path = path.to_vec();
                 item_path.push(start + index);
-                let mut full_path = self.headings.clone();
-                full_path.extend_from_slice(&item_path);
                 let indent = "    ".repeat(path.len());
-                let mut out = format!("{indent}{}", marker(self.style, &full_path));
+                let mut out = format!(
+                    "{indent}{}",
+                    list_marker(self.list_base() + path.len(), start + index)
+                );
                 let mut first = true;
                 let mut next_nested = 1;
                 for child in item.children() {
@@ -179,6 +190,50 @@ impl Renderer {
     }
 }
 
+/// List numbering ladder (design.md「中文序号规则」): lists never take the
+/// heading-owned 一、/（一） levels. Level 1 = `1.`, level 2 = `（1）`,
+/// level 3 = `①`, then `a.`; deeper levels fall back to `·` bullets.
+const LIST_LADDER: usize = 4;
+
+fn list_marker(rung: usize, n: usize) -> String {
+    match rung {
+        0 => format!("{n}. "),
+        1 => format!("（{n}）"),
+        2 if n <= 50 => circled(n),
+        2 => format!("{n}) "),
+        3 => format!("{}. ", alphabetic(n)),
+        _ => "· ".into(),
+    }
+}
+
+/// Which list-ladder rung (if any) a heading level's marker occupies.
+fn heading_rung(style: NumberingStyle, level: usize) -> Option<usize> {
+    let rung = match (style, level) {
+        (NumberingStyle::Chinese, 1 | 2) => return None,
+        (NumberingStyle::Chinese, 3) => 0,
+        (NumberingStyle::Chinese, 4) => 1,
+        (NumberingStyle::Chinese, 5) => 2,
+        (NumberingStyle::Chinese, 6) => 3,
+        (NumberingStyle::ChineseCompact, 1) => return None,
+        (NumberingStyle::ChineseCompact, 2) => 0,
+        (NumberingStyle::ChineseCompact, 3) => 1,
+        // Decimal headings (1. / 1.1 / …) and anything deeper all read as
+        // the `1.` family.
+        (NumberingStyle::Decimal, _) => 0,
+        _ => 0,
+    };
+    Some(rung.min(LIST_LADDER - 1))
+}
+
+fn circled(n: usize) -> String {
+    let base = match n {
+        1..=20 => 0x2460,
+        21..=35 => 0x3251 - 20,
+        _ => 0x32b1 - 35,
+    };
+    char::from_u32(base + n as u32 - 1).unwrap().to_string()
+}
+
 fn marker(style: NumberingStyle, path: &[usize]) -> String {
     let n = *path.last().unwrap_or(&1);
     match (style, path.len()) {
@@ -188,14 +243,7 @@ fn marker(style: NumberingStyle, path: &[usize]) -> String {
         (NumberingStyle::Chinese, 2) => format!("（{}）", chinese(n)),
         (NumberingStyle::Chinese, 3) | (NumberingStyle::ChineseCompact, 2) => format!("{n}. "),
         (NumberingStyle::Chinese, 4) => format!("（{n}）"),
-        (NumberingStyle::Chinese, 5) if n <= 50 => {
-            let base = match n {
-                1..=20 => 0x2460,
-                21..=35 => 0x3251 - 20,
-                _ => 0x32b1 - 35,
-            };
-            char::from_u32(base + n as u32 - 1).unwrap().to_string()
-        }
+        (NumberingStyle::Chinese, 5) if n <= 50 => circled(n),
         (NumberingStyle::Chinese, 5) => format!("（{n}）"),
         (NumberingStyle::Chinese, 6) => format!("{}. ", alphabetic(n)),
         (NumberingStyle::ChineseCompact, 3) => format!("({n}) "),

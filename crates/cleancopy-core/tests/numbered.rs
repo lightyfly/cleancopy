@@ -4,7 +4,7 @@ const SAMPLE: &str = "# 项目周报\n## 本周进展\n- 完成 **剪贴板监�
 
 #[test]
 fn exact_settings_preview_and_newline_contract() {
-    assert_eq!(render_numbered(SAMPLE, NumberingStyle::default()), "项目周报\n\n一、本周进展\n（一）完成 剪贴板监听\n（二）接入 Word 富文本\n    1. 标题映射 标题1/2\n    2. 表格与代码块\n\n二、下周计划\n（一）Windows 托盘\n（二）识别失败兜底");
+    assert_eq!(render_numbered(SAMPLE, NumberingStyle::default()), "项目周报\n\n一、本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    （1）标题映射 标题1/2\n    （2）表格与代码块\n\n二、下周计划\n1. Windows 托盘\n2. 识别失败兜底");
     for input in ["", " \n\t", "<!-- comment -->"] {
         assert_eq!(render_numbered(input, NumberingStyle::Chinese), "");
     }
@@ -15,8 +15,8 @@ fn exact_settings_preview_and_newline_contract() {
 
 #[test]
 fn alternative_settings_previews() {
-    assert_eq!(render_numbered(SAMPLE, NumberingStyle::ChineseCompact), "项目周报\n\n一、本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    (1) 标题映射 标题1/2\n    (2) 表格与代码块\n\n二、下周计划\n1. Windows 托盘\n2. 识别失败兜底");
-    assert_eq!(render_numbered(SAMPLE, NumberingStyle::Decimal), "项目周报\n\n1. 本周进展\n1.1 完成 剪贴板监听\n1.2 接入 Word 富文本\n    1.2.1 标题映射 标题1/2\n    1.2.2 表格与代码块\n\n2. 下周计划\n2.1 Windows 托盘\n2.2 识别失败兜底");
+    assert_eq!(render_numbered(SAMPLE, NumberingStyle::ChineseCompact), "项目周报\n\n一、本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    （1）标题映射 标题1/2\n    （2）表格与代码块\n\n二、下周计划\n1. Windows 托盘\n2. 识别失败兜底");
+    assert_eq!(render_numbered(SAMPLE, NumberingStyle::Decimal), "项目周报\n\n1. 本周进展\n（1）完成 剪贴板监听\n（2）接入 Word 富文本\n    ①标题映射 标题1/2\n    ②表格与代码块\n\n2. 下周计划\n（1）Windows 托盘\n（2）识别失败兜底");
 }
 
 #[test]
@@ -33,9 +33,9 @@ fn headings_reset_descendants_and_titles_reset_document() {
 fn deep_lists_and_sibling_resets_in_all_styles() {
     let input = "- a\n  - b\n    - c\n      - d\n        - e\n      - f\n    - g\n  - h\n- i";
     for (style, expected) in [
-        (NumberingStyle::Chinese, "一、a\n    （一）b\n        1. c\n            （1）d\n                ①e\n            （2）f\n        2. g\n    （二）h\n二、i"),
-        (NumberingStyle::ChineseCompact, "一、a\n    1. b\n        (1) c\n            1.1.1.1 d\n                1.1.1.1.1 e\n            1.1.1.2 f\n        (2) g\n    2. h\n二、i"),
-        (NumberingStyle::Decimal, "1. a\n    1.1 b\n        1.1.1 c\n            1.1.1.1 d\n                1.1.1.1.1 e\n            1.1.1.2 f\n        1.1.2 g\n    1.2 h\n2. i"),
+        (NumberingStyle::Chinese, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
+        (NumberingStyle::ChineseCompact, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
+        (NumberingStyle::Decimal, "1. a\n    （1）b\n        ①c\n            a. d\n                · e\n            b. f\n        ②g\n    （2）h\n2. i"),
     ] { assert_eq!(render_numbered(input, style), expected); }
     assert_eq!(
         render_numbered("9. a\n10. b\n\nparagraph\n\n- c", NumberingStyle::Decimal),
@@ -44,19 +44,61 @@ fn deep_lists_and_sibling_resets_in_all_styles() {
 }
 
 #[test]
-fn every_heading_changes_list_numbering_level() {
+fn lists_start_below_the_nearest_heading_scheme() {
+    // Headings own 一、/（一）; lists start at 1. unless the heading chain
+    // already uses 1. (then （1）), and so on down the ladder.
     for (heading, expected) in [
-        ("# T", "一、item"),
-        ("## T", "（一）item"),
+        ("# T", "1. item"),
+        ("## T", "1. item"),
         ("### T", "1. item"),
         ("#### T", "（1）item"),
         ("##### T", "①item"),
         ("###### T", "a. item"),
     ] {
-        assert!(
-            render_numbered(&format!("{heading}\n- item"), NumberingStyle::Chinese)
-                .ends_with(expected)
-        );
+        let out = render_numbered(&format!("{heading}\n- item"), NumberingStyle::Chinese);
+        assert!(out.ends_with(expected), "{heading}: {out}");
+    }
+    for (style, heading, expected) in [
+        (NumberingStyle::ChineseCompact, "## T", "1. item"),
+        (NumberingStyle::ChineseCompact, "### T", "（1）item"),
+        (NumberingStyle::ChineseCompact, "#### T", "①item"),
+        (NumberingStyle::Decimal, "## T", "（1）item"),
+        (NumberingStyle::Decimal, "### T", "（1）item"),
+    ] {
+        let out = render_numbered(&format!("{heading}\n- item"), style);
+        assert!(out.ends_with(expected), "{style:?} {heading}: {out}");
+    }
+}
+
+#[test]
+fn lists_never_count_toward_heading_numbering_or_repeat_a_scheme() {
+    // Report v3 O-3: list （一） followed by a sub-heading （一） repeated.
+    let input = "## 甲组\n- 甲\n- 乙\n### 小节A\n- 一\n  - 二\n### 小节B";
+    let out = render_numbered(input, NumberingStyle::Chinese);
+    assert_eq!(
+        out,
+        "一、甲组\n1. 甲\n2. 乙\n\n（一）小节A\n1. 一\n    （1）二\n\n（二）小节B"
+    );
+    let decimal = render_numbered(input, NumberingStyle::Decimal);
+    assert_eq!(
+        decimal,
+        "1. 甲组\n（1）甲\n（2）乙\n\n1.1 小节A\n（1）一\n    ①二\n\n1.2 小节B"
+    );
+    // No two nesting levels of one block share a scheme.
+    for style in [
+        NumberingStyle::Chinese,
+        NumberingStyle::ChineseCompact,
+        NumberingStyle::Decimal,
+    ] {
+        let out = render_numbered("#### H\n- a\n  - b\n    - c", style);
+        let markers: Vec<String> = out
+            .lines()
+            .skip(1)
+            .map(|l| l.trim_start().chars().take(1).collect())
+            .collect();
+        let mut unique = markers.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), markers.len(), "{style:?}: {out}");
     }
 }
 
@@ -73,7 +115,7 @@ fn multiline_and_loose_items_keep_indentation() {
             "- first\n  continued\n\n  second paragraph\n  - nested\n- last",
             NumberingStyle::Chinese
         ),
-        "一、first\n    continued\n    second paragraph\n    （一）nested\n二、last"
+        "1. first\n    continued\n    second paragraph\n    （1）nested\n2. last"
     );
 }
 
@@ -81,14 +123,14 @@ fn multiline_and_loose_items_keep_indentation() {
 fn nested_first_items_and_embedded_headings_preserve_item_boundaries() {
     assert_eq!(
         render_numbered("-\n  - child\n\n  tail", NumberingStyle::Decimal),
-        "1. \n    1.1 child\n    tail"
+        "1. \n    （1）child\n    tail"
     );
     assert_eq!(
         render_numbered(
             "## Section\n\n- ### Item heading\n  - child\n- sibling",
             NumberingStyle::Decimal
         ),
-        "1. Section\n1.1 Item heading\n    1.1.1 child\n1.2 sibling"
+        "1. Section\n（1）Item heading\n    ①child\n（2）sibling"
     );
 }
 
@@ -140,14 +182,14 @@ fn chinese_fifth_and_sixth_levels_have_named_markers() {
 fn decimal_lists_continue_across_paragraphs_and_reset_at_headings() {
     assert_eq!(
         render_numbered("## A\n1. first\n\nparagraph\n\n1. second\n   - child\n\n## B\n1. third\n\n# New\n1. fourth", NumberingStyle::Decimal),
-        "1. A\n1.1 first\n\nparagraph\n\n1.2 second\n    1.2.1 child\n\n2. B\n2.1 third\n\nNew\n1. fourth"
+        "1. A\n（1）first\n\nparagraph\n\n（2）second\n    ①child\n\n2. B\n（1）third\n\nNew\n1. fourth"
     );
     assert_eq!(
         render_numbered(
             "- parent\n  - child\n\n  paragraph\n\n  1. next\n- sibling\n  - reset",
             NumberingStyle::Decimal
         ),
-        "1. parent\n    1.1 child\n    paragraph\n    1.2 next\n2. sibling\n    2.1 reset"
+        "1. parent\n    （1）child\n    paragraph\n    （2）next\n2. sibling\n    （1）reset"
     );
 }
 

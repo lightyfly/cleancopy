@@ -749,7 +749,7 @@ fn silent_numbered_rule_renders_expected_chinese_and_restores_all_formats() {
     assert!(e.platform().menus.is_empty());
     assert_eq!(
         e.platform().pasted,
-        vec![Snapshot::text("项目周报\n\n一、本周进展\n（一）完成")]
+        vec![Snapshot::text("项目周报\n\n一、本周进展\n1. 完成")]
     );
     assert_eq!(e.next_deadline(), Some(150));
     timer(&mut e, 149);

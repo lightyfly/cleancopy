@@ -260,3 +260,30 @@ refreshed and inspected (only `e2e-background-progress.png` changed in bytes).
     - `last_write` keeps a fingerprint instead of a copy.
   - **Trade-off:** the Word paste of the 5 MB file took 4.1–4.5 s, against 3.6–3.8 s before.
 - **M-2:** unchanged as instructed.
+
+## v6 (report-v6)
+
+- **Large text (item 1):** clipboard > 2 MB (`MAX_RICH_BYTES`) never builds Word/WPS rich text.
+  Silent mode with a Word/WPS target pastes 中文编号纯文本 and shows a low-urgency toast
+  "内容较大，已按纯文本粘贴"; the menu greys the Word/WPS item with "超过 2MB". 5 MB cap unchanged.
+  Tests: `silent_word_target_over_2mb_pastes_numbered_plain_text_with_toast`,
+  `menu_greys_word_rich_text_over_2mb_with_note`.
+- **Memory reconciliation:** the tester's 907 MB reproduced exactly with their method
+  (v3-5m.md, key 3, VmHWM): 907,248 kB HWM. Cause: that input (tables + many nested lists) yields
+  ~100 MB RTF, 66 MB of it per-list `\listtable` entries; my earlier 378 MB came from v3-cancel5m.md
+  (16 MB RTF). After aad4a19 (fingerprint instead of retained snapshot, no encode copy) rich text at
+  2 MB (v3-2m.md, 2,097,053 B, same method): HWM 338,640 kB, steady 125 MB, paste after 2,546 ms —
+  ≤ 400 MB, so the threshold stays 2 MB.
+- **Safe mode (item 2):** "CleanCopy 遇到问题，已暂停格式化。", action "重新启动", one automatic
+  retry after 5 min, reopening Settings restarts. Live (debug, mock notification server, retry
+  overridden to 8 s): auto retry restarted after 8,134 ms; `--settings` restarted in 210 ms;
+  action restarted in 207 ms. Test `notification_text_and_restart_request`.
+- **Decimal (item 3):** a bullet list directly after a numbered list keeps "• " and does not consume
+  numbers. Test `decimal_bullet_list_after_numbered_list_keeps_bullets`.
+- **Undo (item 4):** test `undo_item_is_greyed_after_undoing` passes (undo record consumed, item
+  disabled). WPS undo path reviewed in code only (Ctrl+Z, write original, paste); WPS was not run.
+- **WPS HTML lists (item 5):** real `<ul>/<li>` with `list-style-type` disc/circle/square by depth,
+  no inline glyphs (supersedes the v5 M-3 note above). Test
+  `bullets_are_real_list_markers_not_inline_glyphs`. Verified on output only; Symbol-font marker
+  rendering in WPS (v5 M-3) not re-checked.
+- Gates: 253 pass / 0 fail / 7 ignored, clippy ok, fmt ok. e2e (`--update-screenshots`): 1 passed.

@@ -51,6 +51,8 @@ pub struct LinuxPlatform {
     epoch: u64,
     started: Instant,
     pub notice: Option<String>,
+    /// Global hotkeys released while onboarding's try-it step is open (M-4).
+    suspended: bool,
 }
 impl LinuxPlatform {
     /// Connect to DISPLAY and reserve both default shortcuts.
@@ -115,6 +117,7 @@ impl LinuxPlatform {
             epoch: unix_ms(),
             started: Instant::now(),
             notice: None,
+            suspended: false,
         };
         result.grab_hotkeys(&result.hotkeys)?;
         result.conn.flush().map_err(err)?;
@@ -147,6 +150,11 @@ impl LinuxPlatform {
     /// Register new shortcuts before releasing old ones, retaining working grabs on failure.
     pub fn update_hotkeys(&mut self, config: &Config) -> Result<()> {
         let new = configured_hotkeys(config, &self.keys)?;
+        if self.suspended {
+            // Grabbed again (with the new keys) when the pause ends.
+            self.hotkeys = new;
+            return Ok(());
+        }
         let added: Vec<_> = new
             .iter()
             .copied()
@@ -165,6 +173,30 @@ impl LinuxPlatform {
         self.ungrab_hotkeys(&removed)?;
         self.hotkeys = new;
         self.conn.flush().map_err(err)
+    }
+    /// Release (true) or re-take (false) the global hotkey grabs.
+    pub fn set_hotkeys_suspended(&mut self, suspended: bool) -> Result<()> {
+        if suspended == self.suspended {
+            return Ok(());
+        }
+        if suspended {
+            self.ungrab_hotkeys(&self.hotkeys)?;
+        } else {
+            self.grab_hotkeys(&self.hotkeys)?;
+        }
+        self.suspended = suspended;
+        eprintln!(
+            "CleanCopy global hotkey {}",
+            if suspended {
+                "paused for onboarding"
+            } else {
+                "restored"
+            }
+        );
+        self.conn.flush().map_err(err)
+    }
+    pub fn hotkeys_suspended(&self) -> bool {
+        self.suspended
     }
     fn ungrab_hotkeys(&self, hotkeys: &[(u8, u16, bool)]) -> Result<()> {
         for &(key, modifiers, _) in hotkeys {
@@ -1307,6 +1339,17 @@ impl eframe::App for LinuxApp {
                         }
                     }
                     Err(error) => eprintln!("CleanCopy config: {error}"),
+                }
+            }
+            if let Some(path) = &self.save_path {
+                let pause = crate::config::hotkey_pause_active(path);
+                if let Err(error) = self
+                    .driver
+                    .engine
+                    .platform_mut()
+                    .set_hotkeys_suspended(pause)
+                {
+                    eprintln!("CleanCopy hotkey pause: {error}");
                 }
             }
             if let Some(tray) = &self.tray {

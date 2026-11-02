@@ -103,6 +103,8 @@ fn request_permission() {
 pub enum Outcome {
     Open,
     Finished,
+    /// "更改快捷键": open settings at the hotkey item.
+    OpenHotkeySettings,
 }
 
 pub struct OnboardingState {
@@ -111,6 +113,7 @@ pub struct OnboardingState {
     pub tried: bool,
     permission: Permission,
     polled_at: f64,
+    open_hotkey_settings: bool,
 }
 
 impl Default for OnboardingState {
@@ -121,6 +124,7 @@ impl Default for OnboardingState {
             tried: false,
             permission: permission_status(),
             polled_at: 0.0,
+            open_hotkey_settings: false,
         }
     }
 }
@@ -309,7 +313,15 @@ impl OnboardingState {
                     }
                 });
             });
+        if std::mem::take(&mut self.open_hotkey_settings) && outcome == Outcome::Open {
+            outcome = Outcome::OpenHotkeySettings;
+        }
         (changed, outcome)
+    }
+    /// The try-it step needs the hotkey delivered to this window, so the
+    /// daemon's global grab must be paused while it is shown.
+    pub fn wants_hotkey_pause(&self) -> bool {
+        self.step == 2
     }
 
     fn step_indicator(&self, ui: &mut egui::Ui) {
@@ -424,18 +436,35 @@ impl OnboardingState {
                                 );
                             });
                     });
-                if self.tried {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    if self.tried {
                         ui.label(RichText::new("✓").size(13.0).strong().color(SUCCESS));
                         ui.label(
                             RichText::new("已按「纯文本 · 中文序号」粘贴")
                                 .size(12.0)
                                 .color(SUCCESS),
                         );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new("更改快捷键")
+                                        .size(11.0)
+                                        .color(SUB)
+                                        .underline(),
+                                )
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.open_hotkey_settings = true;
+                        }
                     });
-                }
+                });
             });
         });
     }

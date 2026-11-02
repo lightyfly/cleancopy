@@ -353,6 +353,26 @@ impl Config {
     }
 }
 
+/// Marker file next to the config: while it exists and names a live process,
+/// the daemon releases its global hotkey grabs (onboarding "试一试", M-4).
+pub fn hotkey_pause_path(config: &std::path::Path) -> PathBuf {
+    config.with_extension("hotkey-pause")
+}
+
+/// Whether a pause marker is present and its owner (pid inside) still runs.
+pub fn hotkey_pause_active(config: &std::path::Path) -> bool {
+    let Ok(text) = fs::read_to_string(hotkey_pause_path(config)) else {
+        return false;
+    };
+    match text.trim().parse::<u32>() {
+        Ok(pid) if cfg!(target_os = "linux") => {
+            std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
 /// Resolve the per-user configuration path without creating directories.
 pub fn config_path() -> Result<PathBuf, ConfigError> {
     dirs::config_dir()

@@ -71,6 +71,15 @@ impl Platform for DemoPlatform {
     }
 }
 
+/// Set on a settings window spawned from onboarding's "更改快捷键" link.
+pub const FOCUS_HOTKEY_ENV: &str = "CLEANCOPY_FOCUS_HOTKEY";
+
+impl Drop for DesktopApp {
+    fn drop(&mut self) {
+        self.set_hotkey_pause(false);
+    }
+}
+
 pub struct DesktopApp {
     view: View,
     engine: Engine<DemoPlatform>,
@@ -82,6 +91,8 @@ pub struct DesktopApp {
     enabled: bool,
     started: Instant,
     epoch: u64,
+    /// Onboarding owns the daemon hotkey-pause marker (M-4).
+    pause_marker: Option<PathBuf>,
 }
 impl DesktopApp {
     pub fn new(
@@ -124,7 +135,11 @@ impl DesktopApp {
             enabled,
             started: Instant::now(),
             epoch,
+            pause_marker: None,
         };
+        if view == View::Settings && std::env::var_os(FOCUS_HOTKEY_ENV).is_some() {
+            app.settings.focus_hotkey();
+        }
         if !matches!(view, View::Settings | View::Onboarding) {
             app.sync_pause(epoch);
         }
@@ -132,6 +147,43 @@ impl DesktopApp {
             app.open_menu();
         }
         app
+    }
+    /// Creates/removes the marker that makes the daemon release its global
+    /// hotkey grabs, so the onboarding try-it box receives the real hotkey.
+    fn set_hotkey_pause(&mut self, on: bool) {
+        if on == self.pause_marker.is_some() {
+            return;
+        }
+        if on {
+            let Some(config) = self
+                .save_path
+                .clone()
+                .or_else(|| crate::config::config_path().ok())
+            else {
+                return;
+            };
+            let marker = crate::config::hotkey_pause_path(&config);
+            match std::fs::write(&marker, std::process::id().to_string()) {
+                Ok(()) => self.pause_marker = Some(marker),
+                Err(error) => eprintln!("hotkey pause marker: {error}"),
+            }
+        } else if let Some(marker) = self.pause_marker.take() {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
+    /// Opens a separate settings window scrolled to (and recording) the hotkey.
+    fn open_hotkey_settings(&mut self) {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let mut command = std::process::Command::new(exe);
+        command.arg("--settings").env(FOCUS_HOTKEY_ENV, "1");
+        if let Some(path) = &self.save_path {
+            command.arg("--config").arg(path);
+        }
+        if let Err(error) = command.spawn() {
+            self.error = Some(format!("无法打开设置：{error}"));
+        }
     }
     fn open_menu(&mut self) {
         self.dispatch(Event::Resume { t: self.now() });
@@ -268,6 +320,12 @@ impl eframe::App for DesktopApp {
                     }
                     self.engine.update_config(config).unwrap();
                 }
+                if outcome == onboarding::Outcome::OpenHotkeySettings {
+                    self.open_hotkey_settings();
+                }
+                let pause = self.onboarding.wants_hotkey_pause()
+                    && outcome != onboarding::Outcome::Finished;
+                self.set_hotkey_pause(pause);
                 if outcome == onboarding::Outcome::Finished && self.error.is_none() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -356,6 +414,29 @@ pub fn demo_config() -> Config {
 mod tests {
     use super::*;
 
+    #[test]
+    fn onboarding_hotkey_pause_marker_follows_try_step_and_drop() {
+        let dir = std::env::temp_dir().join(format!("cc-pause-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_file = dir.join("config.toml");
+        let marker = crate::config::hotkey_pause_path(&config_file);
+        let mut a = app(Config::default());
+        a.save_path = Some(config_file.clone());
+        a.set_hotkey_pause(true);
+        assert!(crate::config::hotkey_pause_active(&config_file));
+        a.set_hotkey_pause(false);
+        assert!(!marker.exists());
+        a.set_hotkey_pause(true);
+        drop(a);
+        assert!(!marker.exists(), "dropping the window restores the hotkey");
+        std::fs::write(&marker, "999999999").unwrap();
+        assert!(
+            !crate::config::hotkey_pause_active(&config_file),
+            "stale pid ignored"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn app(config: Config) -> DesktopApp {
         DesktopApp {
             view: View::Tray,
@@ -374,6 +455,7 @@ mod tests {
             error: None,
             started: Instant::now(),
             epoch: 1_000,
+            pause_marker: None,
         }
     }
 

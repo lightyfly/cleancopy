@@ -32,6 +32,7 @@ pub struct SettingsState {
     dragging: Option<usize>,
     recording: Option<HotkeyTarget>,
     hotkey_error: Option<String>,
+    scroll_to_hotkey: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,12 +54,20 @@ impl Default for SettingsState {
             app_format: Format::ChineseNumbered,
             dragging: None,
             recording: None,
+            scroll_to_hotkey: false,
             hotkey_error: None,
         }
     }
 }
 
 impl SettingsState {
+    /// Opened from onboarding's "更改快捷键": scroll to the hotkey item and
+    /// start recording the paste hotkey.
+    pub fn focus_hotkey(&mut self) {
+        self.scroll_to_hotkey = true;
+        self.recording = Some(HotkeyTarget::Paste);
+        self.hotkey_error = None;
+    }
     /// Returns true only for configuration edits, not preview or selection edits.
     pub fn show(&mut self, ctx: &egui::Context, config: &mut Config) -> bool {
         let mut changed = self.record_hotkey(ctx, config);
@@ -312,7 +321,10 @@ impl SettingsState {
             changed |= reorder(&mut config.secondary_items, from, to);
         }
         ui.add_space(8.0);
-        section(ui, "快捷键（点击后按下新的组合键）");
+        let heading = section(ui, "快捷键（点击后按下新的组合键）");
+        if std::mem::take(&mut self.scroll_to_hotkey) {
+            heading.scroll_to_me(Some(egui::Align::TOP));
+        }
         ui.horizontal(|ui| {
             let label = "静默模式 · 按目标 App 规则直接粘贴";
             ui.label(label);
@@ -602,9 +614,9 @@ impl SettingsState {
     }
 }
 
-fn section(ui: &mut egui::Ui, text: &str) {
+fn section(ui: &mut egui::Ui, text: &str) -> egui::Response {
     // Weight 500 is not available from the installed CJK faces; never bold.
-    ui.label(RichText::new(text).size(11.0).color(MUTED));
+    ui.label(RichText::new(text).size(11.0).color(MUTED))
 }
 
 /// Window width the settings layout is designed for (default 960×680).
@@ -1527,5 +1539,12 @@ mod tests {
             decode_entities("&lt;x&gt; &amp; &#20013; &#x6587;"),
             "<x> & 中 文"
         );
+    }
+    #[test]
+    fn focus_hotkey_starts_recording_the_paste_hotkey() {
+        let mut state = SettingsState::default();
+        state.focus_hotkey();
+        assert_eq!(state.recording, Some(HotkeyTarget::Paste));
+        assert!(state.scroll_to_hotkey);
     }
 }

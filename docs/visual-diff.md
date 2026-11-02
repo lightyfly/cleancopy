@@ -1,38 +1,50 @@
-# Visual comparison — small egui alignment pass
+# Visual comparison — round 3
 
-## Scope and evidence
+Compared the re-captured native screenshots (round-3 final e2e run) against
+`/workspace/cleancopy-design/floating-menu.png` and `tray.png`, opened as
+downscaled JPGs. Values come from `base.css` / `floating-menu.html` /
+`tray.html` and are pinned in source (`ui/menus.rs`, `ui/backdrop.rs`).
 
-Compared the five permitted downscaled JPG references in `/tmp/vd`, opened individually: `mock-floating-menu.jpg`, `e2e-full.jpg`, `e2e-secondary.jpg`, `mock-settings.jpg`, and `e2e-settings.jpg`. No original PNGs or additional images were opened. Exact values and wording below come from `/workspace/cleancopy-design/base.css`, `floating-menu.html`, and `settings.html`, checked against the egui source.
+**Harness fix:** previous `e2e-*` menu screenshots were root-window captures
+in which xfwm4 omitted the composited menu window, so they showed only the
+fixture windows. The harness now captures the menu window itself and waits for
+the async metadata fill before shooting. Earlier "visual" evidence based on
+those files was therefore not evidence of the menu at all.
 
-These are existing screenshots, not post-change evidence. **Screenshots have not been re-captured; xvfb e2e has not been rerun in this pass.** Source-level alignment does not establish pixel-perfect visual parity.
+## Fixed in this pass (design value → implementation)
 
-## Small mismatches selected for correction
+| Element | Design | Implementation |
+|---|---|---|
+| Menu shadow | `0 12px 40px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06)` | Two `egui::Shadow`s: offset [0,12] blur 40 α36; offset [0,2] blur 6 α15 (unit test `menu_shadow_matches_design_css`). Was a single hard offset rect α12. |
+| Menu border | `1px rgba(0,0,0,.08)`, radius 12 | 1px black α20, radius 12 (was `--line`). |
+| Key caps | `.kbd span`: min 18×18, padding 0 4, 1px `--line`, radius 4, `#FAFAFB`, 500 11px `--mute`, gap 3 | Painted caps with exactly these values; hints like `Ctrl+Z` / `Ctrl+Alt+V` / `⌘Z` split into caps (`hints_split_into_design_key_caps`). Was plain text. |
+| Selected row | `--sel #5B5BD6`, radius 6, white text, icon/hint `rgba(255,255,255,.8)`, caps `rgba(255,255,255,.15)` fill + `.3` border | Same values (icon was pure white; caps new). |
+| Summary chip | `剪贴板 <b>Markdown · 1,284 字</b>` | `剪贴板` in `--sub` + summary in bold `--text` (was single `--sub` run without the label). |
+| Tray panel | Panel ends 6px after the last item | Height 346 → 304; removed ~40 px of empty space. |
 
-| Mismatch | Reference | Final status |
-| --- | --- | --- |
-| Settings muted labels used RGB `(145,145,153)` rather than `#A1A1A6`. | `base.css` `--mute`; settings section/pane labels and footer | Fixed in source: RGB `(161,161,166)`. |
-| Settings current-App preview label used muted color and 11-point text rather than secondary text `#6E6E73` at the default 13-point size. | `settings.html` preview header; `base.css` `--sub` and body font size | Fixed in source: secondary color and default font size; separate muted separator. |
-| Settings secondary-format rows were 36 points high rather than 38. | `settings.html` `.row { height:38px }` | Fixed in source: 38-point rows, preserving scrolling and controls. |
-| Settings called the stripped format `纯文本 · 去除标记`, while the floating-menu reference and egui menu call it `纯文本 · 去符号`. | `floating-menu.html`, stripped-format item | Fixed in source: settings label aligned; conversion behavior unchanged. |
+## Blur / translucency
 
-## Remaining / intentionally not changed
+Design: `rgba(255,255,255,.92)` + `backdrop-filter: blur(30px)`.
+`ui/backdrop.rs` selects the material per platform: macOS
+`NSVisualEffectView`, Windows 11 Mica, Linux solid fill. **Only the Linux solid
+fallback is implemented and verified.** The macOS/Windows native hooks are not
+wired (no native adapters exist yet), so every platform currently paints
+opaque white.
 
-- Floating-menu canvas placement and background differ from the mock editor scene. The mock includes an editor window and gradient; egui uses a standalone menu canvas. Rebuilding that scene is outside small copy/color/spacing corrections.
-- Browser menu translucency, blur, shadow, and boxed shortcut styling differ from the current egui presentation. No compositor or widget redesign in this pass.
-- Settings uses native egui controls rather than identical HTML segmented controls, selectors, and checkbox/keycap styling. Selected-App styling also differs from the mock's full-row tint. These remain.
-- Settings has separate Notion/Obsidian groups, additional format/reorder controls, two editable shortcuts, and onboarding/silent-mode controls. Preserve these functional differences rather than hide them to match a static mock.
-- Clipboard counts, target badges, enabled/disabled actions, and platform-specific shortcut text are runtime-dependent; the mock's fixed sample values are not acceptance requirements.
-- Font metrics, line wrapping, and overall visual parity remain unverified after changes without new screenshots.
+## Remaining differences (intentional or not fixed)
 
-## Verification
+- Mock floating menu sits over an editor scene with a gradient; ours is a
+  standalone 640×360 menu window over `#EDEDF2`.
+- Remember row: mock shows a muted `✓`; ours is a functional `☐/☑` checkbox.
+- Tray mock shows `⌘,` / `⌘Q` caps for 设置/退出; those shortcuts do not exist on
+  Linux, so no caps are drawn. Tray "recent" rows use sample data in preview.
+- Row label weight renders slightly heavier than the mock with the installed
+  Noto Sans CJK at 13 px; font metrics are system-dependent.
+- Settings window not re-compared in this pass beyond the round-2 fixes.
 
-Initial notes were committed before code edits in `b9aa64a`. After the corrections:
+## Screenshots (docs/screenshots/)
 
-- `cargo build --workspace --all-targets` — passed.
-- `cargo test -p cleancopy-desktop` — passed: 107 tests passed, 2 native integration tests ignored by their existing annotations (`desktop_runtime_matrix` and Linux native smoke). These ignored tests were not run separately.
-- `cargo clippy --workspace --all-targets -- -D warnings` — passed.
-- The first `cargo fmt --all -- --check` found a line-wrapping discrepancy in the new preview label; ran `cargo fmt --all` before the successful build/test/clippy sequence.
-
-Run logs are local temporary files: `/tmp/cleancopy-visual-build.log`, `/tmp/cleancopy-visual-test.log`, and `/tmp/cleancopy-visual-clippy.log` (not committed delivery artifacts).
-
-No screenshots or prior verification artifacts are presented as a fresh run. No xvfb e2e or screenshot recapture was performed; final appearance remains unverified.
+Menu window captures 640×360: `e2e-secondary.png`, `e2e-remember-checked.png`,
+`e2e-full.png`, `e2e-undo.png`, `e2e-nonsilent-1.png`, `e2e-nonsilent-2.png`,
+`e2e-background-before.png`, `e2e-background-progress.png`.
+Root captures 1280×800: `e2e-preview.png`, `e2e-settings.png`, `e2e-tray.png`.

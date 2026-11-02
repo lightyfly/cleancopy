@@ -682,10 +682,9 @@ pub(crate) const MENU_SHADOWS: [egui::Shadow; 2] = [
     },
 ];
 pub(crate) const MENU_BORDER: Color32 = Color32::from_black_alpha(20); // .08 × 255
-/// The design's panel is `rgba(255,255,255,.92)` over a 30px backdrop blur.
-/// X11 has no portable compositor blur, so Linux uses the solid-colour
-/// fallback (opaque white); see docs/visual-diff.md for macOS/Windows.
-pub(crate) const MENU_FILL: Color32 = Color32::WHITE;
+/// The design's panel is `rgba(255,255,255,.92)` over a 30px backdrop blur;
+/// see `ui::backdrop` for the per-platform material (Linux: solid fallback).
+pub(crate) const MENU_FILL: Color32 = super::backdrop::Backdrop::for_platform().panel_fill();
 fn panel(ui: &egui::Ui, rect: Rect) {
     for shadow in MENU_SHADOWS {
         ui.painter().add(shadow.as_shape(rect, 12.0));

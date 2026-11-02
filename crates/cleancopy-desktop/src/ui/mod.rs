@@ -1,4 +1,5 @@
 //! Stage B UI. Native clipboard, hotkey, and tray registration are not installed.
+pub mod backdrop;
 pub mod fonts;
 pub mod menus;
 pub mod settings;

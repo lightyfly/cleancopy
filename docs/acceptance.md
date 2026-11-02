@@ -15,12 +15,17 @@ cargo test --workspace
 xvfb-run -a -s '-screen 0 1280x800x24 -noreset' cargo test -p cleancopy-desktop -- --ignored --nocapture
 ```
 
-- Workspace: **161 passed, 0 failed, 6 ignored** across all binaries/doc tests.
-  Desktop library: 31; configuration integration: 30; engine integration: 31.
-- Explicit ignored desktop run: **2 passed, 0 failed**. These are separate
-  executions, not part of the 161 workspace passes. Other packages' four
-  ignored clipboard tests were not exercised by the desktop-only command.
-- Formatting and strict all-target workspace Clippy succeeded.
+- Workspace (`cargo test --workspace`, round 3 final): **205 passed, 0 failed, 7 ignored**.
+  Per binary: core unit 8, cancel 3, desktop_html_detection 7, golden 1, html 5,
+  numbered 12, rtf 9, rules 8, word_lists 4; clipboard unit 10 (+2 ignored),
+  clipboard native 0 (+2 ignored), clipboard tests 0 (+1 ignored); cli 12;
+  desktop library 47; config 30; engine 49; desktop_e2e 0 (+1 ignored);
+  linux_smoke 0 (+1 ignored).
+- Explicit ignored desktop run (the xvfb command above): **2 passed, 0 failed**
+  (`desktop_runtime_matrix`, Linux native smoke), run 3× consecutively, all green.
+  These are separate executions, not part of the 205 workspace passes. The
+  clipboard crate's 5 ignored native tests were not exercised by that command.
+- `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` passed.
 - Raw final native output: [desktop-e2e-run.log](desktop-e2e-run.log).
   Workspace and lint output: [hotkey-workspace-tests.log](hotkey-workspace-tests.log),
   [hotkey-clippy.log](hotkey-clippy.log).
@@ -38,24 +43,35 @@ xvfb-run -a -s '-screen 0 1280x800x24 -noreset' cargo test -p cleancopy-desktop 
 | Native shortcut safety | **Passed**: CapsLock/NumLock/held Shift; exact modifier matching; removed binding available to a second client; conflicting replacement reports BadAccess and retains both old bindings; partial new grab is released. |
 | Restoration and undo | **Passed** within Linux fixtures/mock engine: payload bytes plus original native type/format restored; actual Ctrl+Z then original-source paste observed. Newer external clipboard copies are intentionally not overwritten. |
 
-## Measured latency — final successful native run
+## Measured latency — round 3 final native runs (3 consecutive runs)
 
-| Operation | Actual elapsed | Budget | Result |
-|---|---:|---:|---|
-| Unknown App → visible secondary menu | **50.85 ms** | ≤100 ms | **Passed** |
-| Ctrl+Alt+V → visible Full | **39.38 ms** | Reported | Observed |
-| Ctrl+Alt+V → visible undo menu | **31.22 ms** | Reported | Observed |
-| Silent OFF primary → Full, first / second | **33.55 / 52.20 ms** | Reported | Observed |
-| 10k characters → conversion + native paste | **39.02 ms** | ≤300 ms | **Passed** |
-| Independent smoke Ctrl+Alt+V → visible Full | **34.72 ms** | Reported | Observed |
+Menus now map first with a loading model and the X11 clipboard is read on a
+worker thread; counts/type fill in afterwards (N-1). The menu window is
+pre-created hidden and every menu variant is laid out during startup frames
+(warm-up), which removed the first-press outlier.
 
-The harness prints real `MEASURE` lines and asserts both requested budgets.
-Menu timings include native window mapping **and expected painted panel pixels**;
-paste timing ends when the target peer records received clipboard bytes. Timings
-include input-process/polling overhead. These are individual Linux/Xvfb software
-rendering observations, not percentiles or an M1/i5 hardware qualification.
-Removing arbitration resolved the previous 430.17 ms menu / 431.31 ms paste
-failures; those historical numbers are not current results.
+| Operation | Run 1 | Run 2 | Run 3 | Budget | Result |
+|---|---:|---:|---:|---:|---|
+| Secondary ×20 incl. first press after launch: min / median / max | 11.56 / 22.76 / 34.96 | 12.15 / 24.67 / 36.67 | 11.26 / 24.25 / 28.08 | ≤100 ms | **Passed** |
+| First press after launch (secondary) | 21.63 | 20.93 | 21.34 | ≤100 ms | **Passed** |
+| 3 MB clipboard → visible secondary (unknown App) | 45.39 | 20.28 | 17.72 | ≤100 ms | **Passed** |
+| 3 MB clipboard → visible Full (Ctrl+Alt+V) | 17.38 | 17.31 | 17.13 | ≤100 ms | **Passed** |
+| 5 MB clipboard → visible Full (Ctrl+Alt+V) | 27.31 | 23.03 | 23.26 | ≤100 ms | **Passed** |
+| Ctrl+Alt+V → visible Full (small) | — | — | 21.05 | Reported | Observed |
+| Ctrl+Alt+V → visible undo menu | — | — | 23.12 | Reported | Observed |
+| Silent OFF primary → Full, first / second | — | — | 21.62 / 21.64 | Reported | Observed |
+| 10k characters → conversion + native paste | — | — | 17.81 | ≤300 ms | **Passed** |
+| Large background-cancel source → visible Full | — | — | 35.24 | Reported | Observed (was 2226 ms) |
+| Independent smoke Ctrl+Alt+V → visible Full | — | — | 16.68 | Reported | Observed |
+
+All values in ms; "—" means only the run-3 log is quoted (runs 1–2 were
+similar). Menu timings end when the native window is mapped **and** the
+expected panel pixels are painted (the loading model for large clipboards);
+the clipboard metadata arrives later (a 3 MB X11 read is still ~0.5–0.6 s, now
+off the UI path). Escape during that read cancels it and the late result is
+discarded (asserted in e2e). Earlier 164.96 ms secondary and 2226.19 ms
+large-Full samples are historical, not current results. These are Linux/Xvfb
+software-rendering observations, not hardware qualification.
 
 ## Broader design acceptance and limitations
 
@@ -70,13 +86,30 @@ failures; those historical numbers are not current results.
 | Permission denial/regrant and reauthorization guidance | **Not verified**. Native macOS/Windows desktop adapters remain unimplemented. |
 | Reference visual fidelity and native platform symbols | **Not verified**. Captures and panel-pixel probes exist; no certified reference-image comparison or native macOS/Windows screenshot acceptance. |
 
-Eight native screenshots were regenerated by the final matrix under
-[docs/screenshots](screenshots/): `e2e-secondary`, `e2e-remember-checked`,
-`e2e-full`, `e2e-undo`, `e2e-nonsilent-1`, `e2e-nonsilent-2`, `e2e-settings`,
-and `e2e-preview` (all `.png`, 1280×800). No pixel-perfect manual approval is
-claimed. No StatusNotifier host was available, so real tray-host integration
-was not verified. The complete original eight-criterion release gate is **not
-passed** merely because this requested hotkey change passes.
+Twelve native screenshots were regenerated by the final matrix under
+[docs/screenshots](screenshots/). Menu shots are now captures of the menu window
+itself (640×360) taken after the async metadata fill — the previous 1280×800
+root captures silently omitted the composited menu window: `e2e-secondary`,
+`e2e-remember-checked`, `e2e-full`, `e2e-undo`, `e2e-nonsilent-1`,
+`e2e-nonsilent-2`, `e2e-background-before`, `e2e-background-progress`.
+Root captures (1280×800): `e2e-settings`, `e2e-preview`, `e2e-tray`.
+Comparison against the mockups: [visual-diff.md](visual-diff.md). No
+pixel-perfect approval is claimed. No StatusNotifier host was available, so real
+tray-host integration was not verified. The complete original eight-criterion
+release gate is **not passed** merely because these items pass.
+
+## Round 3 / report-v2 items
+
+| Item | Status and evidence |
+|---|---|
+| 取消 stops background conversion | Cooperative cancellation token checked by numbered/plain/HTML/RTF renderers; worker result discarded. `tests/cancel.rs` (3), engine cancel tests, native 取消 click in e2e. comrak *parse* itself is not interruptible. |
+| N-1 menus first, metadata async, <100 ms at any size | Done: loading model + background X11 read. Engine tests `full_menu_appears_before_the_clipboard_is_read_then_fills_in`, `unknown_app_secondary_menu_appears_first_and_fills_in`, `unknown_app_plain_text_closes_the_loading_menu_and_pastes_original`, `escape_during_loading_cancels_and_ignores_the_late_result`, `hotkeys_are_ignored_while_the_clipboard_is_loading`, `recognized_app_silent_paste_never_shows_a_loading_menu`; native 3/5 MB timings above. Markdown detection bounded to a 256 KB prefix. |
+| 165 ms outlier / pre-created windows | The single menu window was already created hidden at startup; the outlier was first-frame glyph/layout work. Startup warm-up now lays out all menu variants while hidden. 20-run distribution above. |
+| N-2 ChatGPT/Gemini code-block headers | `html_source.rs` lifts `<pre>`/`<code-block>`; header text becomes the fence language only. 7 unit tests + `chatgpt_code_block_header_never_leaks_into_code`. |
+| N-3 Word/WPS nested lists | `<p>` inside `<li>` unwrapped, empty `<li>` dropped, explicit `list-style-type` per depth. `tests/word_lists.rs` (4). Not verified in installed Word/WPS. |
+| N-4 visible-text char count | `visible_chars` strips tags/script/style/head and decodes entities. `html_source_menu_counts_visible_text_not_tags`. |
+| Target lock at hotkey press | Target captured at press; own pid and transient popups (notification, popup/dropdown menu, tooltip, combo, dnd) rejected. `large_conversion_keeps_the_target_locked_at_hotkey_time`. |
+| Visual pass | Design shadow/border, key caps, selected-row colours, chip summary; blur strategy in `ui/backdrop.rs` (Linux solid fallback). See visual-diff.md. |
 
 See [desktop-verification.md](desktop-verification.md) for runtime method and
 adjacent probes, [compat.md](compat.md) for compatibility scope, and

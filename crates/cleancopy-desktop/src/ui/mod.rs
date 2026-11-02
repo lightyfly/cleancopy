@@ -127,8 +127,7 @@ impl DesktopApp {
     fn open_menu(&mut self) {
         self.dispatch(Event::Resume { t: self.now() });
         self.engine.platform_mut().notice.clear();
-        self.dispatch(Event::HotkeyPressed { t: self.now() });
-        self.dispatch(Event::HotkeyPressed { t: self.now() });
+        self.dispatch(Event::FullMenuHotkeyPressed { t: self.now() });
     }
     fn now(&self) -> u64 {
         self.epoch + self.started.elapsed().as_millis() as u64
@@ -319,7 +318,13 @@ mod tests {
         DesktopApp {
             view: View::Tray,
             enabled: config.paused_until.is_none_or(|until| until <= 1_000),
-            engine: Engine::new(config, DemoPlatform::default()),
+            engine: Engine::new(
+                config,
+                DemoPlatform {
+                    clipboard: Snapshot::text("# Test clipboard"),
+                    ..Default::default()
+                },
+            ),
             settings: Default::default(),
             menu: Default::default(),
             save_path: None,
@@ -350,7 +355,7 @@ mod tests {
         app.engine
             .handle(Event::HotkeyPressed { t: 4_000_002 })
             .unwrap();
-        assert!(app.engine.next_deadline().is_some());
+        assert!(app.engine.platform().menu.is_some());
     }
 
     #[test]

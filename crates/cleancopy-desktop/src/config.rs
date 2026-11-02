@@ -87,7 +87,10 @@ pub struct Config {
     pub fallback: Fallback,
     /// Order is significant; disabled entries retain their positions.
     pub secondary_items: Vec<SecondaryItem>,
+    /// Paste using the configured silent-mode and application rules.
     pub hotkey: String,
+    /// Open the full paste menu directly, independently of silent mode.
+    pub full_menu_hotkey: String,
     /// Unix timestamp in milliseconds, or no timed pause.
     pub paused_until: Option<u64>,
     /// Newest first, capped at two entries when loaded, saved, or recorded.
@@ -106,6 +109,12 @@ impl Default for Config {
                 "Super+Shift+V"
             } else {
                 "Ctrl+Shift+V"
+            }
+            .into(),
+            full_menu_hotkey: if cfg!(target_os = "macos") {
+                "Super+Alt+V"
+            } else {
+                "Ctrl+Alt+V"
             }
             .into(),
             paused_until: None,
@@ -270,6 +279,7 @@ impl Config {
             fallback,
             secondary_items,
             hotkey,
+            full_menu_hotkey,
             paused_until,
             recent_pastes
         );
@@ -312,6 +322,11 @@ impl Config {
         if self.hotkey.trim().is_empty() || self.hotkey.len() > 256 {
             return Err(ConfigError::Invalid(
                 "hotkey must contain 1–256 bytes of nonblank text",
+            ));
+        }
+        if self.full_menu_hotkey.trim().is_empty() || self.full_menu_hotkey.len() > 256 {
+            return Err(ConfigError::Invalid(
+                "full_menu_hotkey must contain 1–256 bytes of nonblank text",
             ));
         }
         for rule in &self.app_rules {
@@ -501,4 +516,51 @@ fn default_app_rules() -> Vec<AppRule> {
         }
     }
     rules
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_gets_independent_menu_hotkey() {
+        let config: Config = toml::from_str("hotkey = 'Ctrl+Shift+P'").unwrap();
+        assert_eq!(config.hotkey, "Ctrl+Shift+P");
+        assert_eq!(
+            config.full_menu_hotkey,
+            if cfg!(target_os = "macos") {
+                "Super+Alt+V"
+            } else {
+                "Ctrl+Alt+V"
+            }
+        );
+    }
+
+    #[test]
+    fn hotkeys_round_trip_and_merge_independently() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let previous = Config::default();
+        previous.save(&path).unwrap();
+        let mut paste_edit = previous.clone();
+        paste_edit.hotkey = "Ctrl+Shift+P".into();
+        paste_edit.save_changes(&path, &previous).unwrap();
+        let mut menu_edit = previous.clone();
+        menu_edit.full_menu_hotkey = "Ctrl+Alt+M".into();
+        menu_edit.save_changes(&path, &previous).unwrap();
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(loaded.hotkey, "Ctrl+Shift+P");
+        assert_eq!(loaded.full_menu_hotkey, "Ctrl+Alt+M");
+    }
+
+    #[test]
+    fn rejects_blank_or_oversized_menu_hotkey() {
+        for value in ["   ".to_owned(), "V".repeat(257)] {
+            let config = Config {
+                full_menu_hotkey: value,
+                ..Default::default()
+            };
+            assert!(matches!(config.validate(), Err(ConfigError::Invalid(_))));
+        }
+    }
 }

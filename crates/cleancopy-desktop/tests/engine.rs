@@ -99,6 +99,9 @@ fn engine(exe: &str, text: &str) -> Engine<Mock> {
 fn hot(e: &mut Engine<Mock>, t: u64) {
     e.handle(Event::HotkeyPressed { t }).unwrap();
 }
+fn full(e: &mut Engine<Mock>, t: u64) {
+    e.handle(Event::FullMenuHotkeyPressed { t }).unwrap();
+}
 fn timer(e: &mut Engine<Mock>, t: u64) {
     e.handle(Event::Timer { t }).unwrap();
 }
@@ -128,10 +131,7 @@ fn recognized_silent_word_restores_every_original_byte_after_150ms() {
         .insert(TEXT_MARKDOWN.into(), b"# Title\r\n\r\n**bold**\n".to_vec());
     let original = e.platform().clipboard.clone();
     hot(&mut e, 1000);
-    assert_eq!(e.next_deadline(), Some(1400));
-    timer(&mut e, 1399);
-    assert_eq!(e.platform().pastes, 0);
-    timer(&mut e, 1400);
+    assert!(e.platform().menus.is_empty());
     assert_eq!(e.platform().pastes, 1);
     assert_eq!(e.platform().clipboard.formats.len(), 3);
     assert!(e.platform().clipboard.formats.contains_key(TEXT_PLAIN));
@@ -139,20 +139,23 @@ fn recognized_silent_word_restores_every_original_byte_after_150ms() {
         String::from_utf8_lossy(&e.platform().clipboard.formats[TEXT_HTML]).contains("MsoHeading1")
     );
     assert!(e.platform().clipboard.formats[TEXT_RTF].starts_with(b"{\\rtf1"));
-    assert_eq!(e.next_deadline(), Some(1550));
-    timer(&mut e, 1549);
+    assert_eq!(e.next_deadline(), Some(1150));
+    timer(&mut e, 1149);
     assert_ne!(e.platform().clipboard, original);
-    timer(&mut e, 1550);
+    timer(&mut e, 1150);
     assert_eq!(e.platform().clipboard, original);
     assert_eq!(e.next_deadline(), None);
-    assert_eq!(e.config().recent_pastes[0].timestamp, 1400);
+    assert_eq!(e.config().recent_pastes[0].timestamp, 1000);
 }
 
 #[test]
 fn unknown_secondary_remembers_and_honors_configured_items() {
     let mut e = engine("unknown", "## Heading");
     hot(&mut e, 0);
-    timer(&mut e, 400);
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.platform().pastes, 0);
+    assert!(e.platform().writes.is_empty());
+    assert_eq!(e.next_deadline(), None);
     let menu = e.platform().menus.last().unwrap().clone();
     assert_eq!(menu.kind, MenuKind::Secondary);
     assert!(menu.show_remember);
@@ -170,34 +173,43 @@ fn unknown_secondary_remembers_and_honors_configured_items() {
     );
     timer(&mut e, 552);
     hot(&mut e, 600);
-    timer(&mut e, 1000);
     assert_eq!(e.platform().pastes, 2);
     assert_eq!(e.platform().menus.len(), 2); // show + checkbox refresh only
 }
 
 #[test]
-fn inclusive_double_press_always_full_and_never_double_pastes() {
-    for delta in [0, 1, 399, 400] {
-        let mut e = engine("WINWORD.EXE", "# heading");
-        hot(&mut e, 100);
-        hot(&mut e, 100 + delta);
-        let menu = e.platform().menus.last().unwrap();
+fn explicit_full_hotkey_immediately_opens_full_without_pasting() {
+    for exe in ["WINWORD.EXE", "unknown"] {
+        let mut e = engine(exe, "# heading");
+        let original = e.platform().clipboard.clone();
+        full(&mut e, 100);
+        assert_eq!(e.platform().menus.len(), 1);
+        let menu = &e.platform().menus[0];
         assert_eq!(menu.kind, MenuKind::Full);
         assert_eq!(menu.formats.len(), 4);
-        assert_eq!(menu.default_choice, Choice::Format(Format::WordRichText));
         assert_eq!(menu.content_label, "Markdown");
         assert!(menu.original_enabled);
+        if exe == "WINWORD.EXE" {
+            assert_eq!(menu.default_choice, Choice::Format(Format::WordRichText));
+        }
+        assert_eq!(e.platform().clipboard, original);
+        assert_eq!(e.platform().pastes, 0);
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.next_deadline(), None);
+        hot(&mut e, 101);
+        full(&mut e, 102);
+        assert_eq!(e.platform().menus.len(), 1);
         timer(&mut e, 500);
         assert_eq!(e.platform().pastes, 0);
         choose(&mut e, 501, Choice::Original);
-        timer(&mut e, 900);
         assert_eq!(e.platform().pastes, 1);
         assert!(e.platform().writes.is_empty());
+        assert_eq!(e.next_deadline(), None);
     }
 }
 
 #[test]
-fn silent_false_first_menu_second_ignored_and_full_formats_respect_disabled_secondary() {
+fn silent_false_primary_immediately_opens_full_and_busy_hotkeys_are_ignored() {
     let config = Config {
         silent_mode: false,
         ..Config::default()
@@ -211,8 +223,11 @@ fn silent_false_first_menu_second_ignored_and_full_formats_respect_disabled_seco
         },
     );
     hot(&mut e, 0);
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
+    assert_eq!(e.next_deadline(), None);
     hot(&mut e, 100);
-    timer(&mut e, 400);
+    full(&mut e, 101);
     assert_eq!(e.platform().menus.len(), 1);
     assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
     assert!(!e.platform().menus[0]
@@ -229,7 +244,9 @@ fn markdown_bytes_not_canonicalized() {
     let source = "# heading\r\n\r\n*em*   \r\n";
     let mut e = engine("notion", source);
     hot(&mut e, 0);
-    timer(&mut e, 400);
+    assert_eq!(e.platform().pastes, 1);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(e.next_deadline(), Some(150));
     assert_eq!(
         e.platform().clipboard.formats[TEXT_PLAIN],
         source.as_bytes()
@@ -244,11 +261,12 @@ fn markdown_bytes_not_canonicalized() {
 fn plain_defaults_raw_but_menu_conversion_is_selectable_and_muted() {
     let mut e = engine("WINWORD.EXE", "ordinary text");
     hot(&mut e, 0);
-    timer(&mut e, 400);
     assert_eq!(e.platform().pastes, 1);
     assert!(e.platform().writes.is_empty());
-    hot(&mut e, 500);
-    hot(&mut e, 600);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(e.next_deadline(), None);
+    full(&mut e, 500);
+    assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
     assert!(e
         .platform()
         .menus
@@ -272,11 +290,12 @@ fn huge_and_images_raw_only_even_with_recognized_app() {
         let mut e = engine("WINWORD.EXE", "");
         e.platform_mut().clipboard = snapshot.clone();
         hot(&mut e, 0);
-        timer(&mut e, 400);
+        assert_eq!(e.platform().pastes, 1);
+        assert!(e.platform().menus.is_empty());
+        assert_eq!(e.next_deadline(), None);
         assert_eq!(e.platform().clipboard, snapshot);
         assert!(e.platform().writes.is_empty());
-        hot(&mut e, 500);
-        hot(&mut e, 600);
+        full(&mut e, 500);
         assert!(e
             .platform()
             .menus
@@ -297,8 +316,7 @@ fn undo_is_once_same_target_and_restores_current_not_old_clipboard() {
     let mut e = engine("WINWORD.EXE", "# original");
     let original = e.platform().clipboard.clone();
     hot(&mut e, 0);
-    timer(&mut e, 400);
-    timer(&mut e, 550);
+    timer(&mut e, 150);
     let current = Snapshot {
         formats: [("opaque/current".into(), vec![255, 0, 42])].into(),
     };
@@ -307,8 +325,7 @@ fn undo_is_once_same_target_and_restores_current_not_old_clipboard() {
     e.handle(Event::Undo { t: 600 }).unwrap();
     assert_eq!(e.platform().undos, 0);
     e.platform_mut().app = app("WINWORD.EXE");
-    hot(&mut e, 650);
-    hot(&mut e, 700);
+    full(&mut e, 700);
     assert!(e.platform().menus.last().unwrap().undo_enabled);
     choose(&mut e, 701, Choice::Undo);
     assert_eq!(e.platform().undos, 1);
@@ -323,12 +340,13 @@ fn undo_is_once_same_target_and_restores_current_not_old_clipboard() {
 #[test]
 fn pause_cancel_stale_menu_and_late_timers_are_harmless() {
     let mut e = engine("WINWORD.EXE", "# heading");
-    hot(&mut e, 0);
+    let original = e.platform().clipboard.clone();
+    full(&mut e, 0);
+    assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
     e.handle(Event::Cancel { t: 1 }).unwrap();
     timer(&mut e, 1000);
     assert_eq!(e.platform().pastes, 0);
-    hot(&mut e, 1100);
-    hot(&mut e, 1200);
+    full(&mut e, 1100);
     let id = e.platform().menus.last().unwrap().id;
     e.handle(Event::Pause {
         t: 1201,
@@ -342,51 +360,62 @@ fn pause_cancel_stale_menu_and_late_timers_are_harmless() {
     })
     .unwrap();
     hot(&mut e, 1500);
+    full(&mut e, 1501);
     timer(&mut e, 1900);
     assert_eq!(e.platform().pastes, 0);
+    assert_eq!(e.platform().menus.len(), 2);
+    assert_eq!(e.next_deadline(), None);
     hot(&mut e, 2000);
-    timer(&mut e, 2400);
+    assert_eq!(e.platform().pastes, 1);
+    assert_eq!(e.next_deadline(), Some(2150));
     e.handle(Event::Pause {
-        t: 2401,
+        t: 2001,
         until: None,
     })
     .unwrap();
-    hot(&mut e, 2402);
-    timer(&mut e, 2550); // pausing cannot abandon restoration
+    hot(&mut e, 2002);
+    full(&mut e, 2003);
+    timer(&mut e, 2149);
+    assert_ne!(e.platform().clipboard, original);
+    timer(&mut e, 2150); // Pausing cannot abandon restoration.
+    assert_eq!(e.platform().clipboard, original);
     assert_eq!(e.platform().pastes, 1);
     assert_eq!(e.next_deadline(), None);
     hot(&mut e, 3000);
-    assert_eq!(e.next_deadline(), None);
-    e.handle(Event::Resume { t: 3001 }).unwrap();
-    hot(&mut e, 3002);
-    timer(&mut e, 100);
-    assert_eq!(e.next_deadline(), Some(3402));
+    full(&mut e, 3001);
+    assert_eq!(e.platform().menus.len(), 2);
+    e.handle(Event::Resume { t: 3002 }).unwrap();
+    hot(&mut e, 3003);
+    assert_eq!(e.platform().pastes, 2);
+    timer(&mut e, 100); // Stale timers cannot restore early.
+    assert_eq!(e.next_deadline(), Some(3153));
 }
 
 #[test]
-fn foreground_and_clipboard_captured_before_delay_and_checked_before_paste() {
+fn menu_capture_checks_foreground_and_clipboard_before_paste() {
     for change_focus in [true, false] {
         let mut e = engine("WINWORD.EXE", "# first");
-        hot(&mut e, 0);
+        full(&mut e, 0);
+        assert_eq!(e.platform().pastes, 0);
+        assert_eq!(e.next_deadline(), None);
         if change_focus {
             e.platform_mut().app = app("other");
         } else {
             e.platform_mut().clipboard = Snapshot::text("# newer");
         }
-        timer(&mut e, 400);
+        choose(&mut e, 1, Choice::Format(Format::WordRichText));
         assert_eq!(e.platform().pastes, 0);
         assert!(e.platform().writes.is_empty());
         assert_eq!(e.platform().notices.len(), 1);
     }
     let mut e = engine("WINWORD.EXE", "# first");
-    hot(&mut e, 0);
+    full(&mut e, 0);
     e.platform_mut().app.name = "renamed display".into();
-    timer(&mut e, 400);
+    choose(&mut e, 1, Choice::Format(Format::WordRichText));
     assert_eq!(e.platform().pastes, 1);
     let mut e = engine("", "# first");
     e.platform_mut().app.exe = None;
-    hot(&mut e, 0);
-    hot(&mut e, 1);
+    full(&mut e, 0);
     choose(&mut e, 2, Choice::Original);
     assert_eq!(e.platform().pastes, 0);
 }
@@ -395,11 +424,14 @@ fn foreground_and_clipboard_captured_before_delay_and_checked_before_paste() {
 fn no_overlapping_transaction_and_external_change_not_overwritten() {
     let mut e = engine("WINWORD.EXE", "# first");
     hot(&mut e, 0);
-    timer(&mut e, 400);
-    hot(&mut e, 401);
+    assert_eq!(e.platform().pastes, 1);
+    assert_eq!(e.next_deadline(), Some(150));
+    hot(&mut e, 1);
+    full(&mut e, 2);
+    assert!(e.platform().menus.is_empty());
     let newest = Snapshot::text("new external copy");
     e.platform_mut().clipboard = newest.clone();
-    timer(&mut e, 550);
+    timer(&mut e, 150);
     timer(&mut e, 10000);
     assert_eq!(e.platform().clipboard, newest);
     assert_eq!(e.platform().pastes, 1);
@@ -413,15 +445,16 @@ fn restoration_errors_retain_state_retry_and_block_hotkeys() {
         let mut e = engine("WINWORD.EXE", "# original");
         let original = e.platform().clipboard.clone();
         hot(&mut e, 0);
-        timer(&mut e, 400);
         if effect == "notify" {
             e.platform_mut().clipboard = Snapshot::text("external");
         }
         e.platform_mut().fail = Some(effect);
-        assert_eq!(e.handle(Event::Timer { t: 550 }), Err(effect));
-        assert_eq!(e.next_deadline(), Some(700));
-        hot(&mut e, 551);
-        timer(&mut e, 700);
+        assert_eq!(e.handle(Event::Timer { t: 150 }), Err(effect));
+        assert_eq!(e.next_deadline(), Some(300));
+        hot(&mut e, 151);
+        full(&mut e, 152);
+        assert!(e.platform().menus.is_empty());
+        timer(&mut e, 300);
         assert_eq!(e.next_deadline(), None);
         if effect != "notify" {
             assert_eq!(e.platform().clipboard, original);
@@ -444,19 +477,17 @@ fn fallible_effects_do_not_panic_or_lose_required_restoration() {
     for effect in ["write", "paste"] {
         let mut e = engine("WINWORD.EXE", "# title");
         let original = e.platform().clipboard.clone();
-        hot(&mut e, 0);
         e.platform_mut().fail = Some(effect);
-        assert_eq!(e.handle(Event::Timer { t: 400 }), Err(effect));
-        timer(&mut e, 550);
+        assert_eq!(e.handle(Event::HotkeyPressed { t: 0 }), Err(effect));
+        timer(&mut e, 150);
         assert_eq!(e.platform().clipboard, original);
         assert_eq!(e.platform().pastes, 0);
     }
     let mut e = engine("unknown", "# title");
-    hot(&mut e, 0);
     e.platform_mut().fail = Some("show");
-    assert_eq!(e.handle(Event::Timer { t: 400 }), Err("show"));
-    hot(&mut e, 500);
-    hot(&mut e, 501);
+    assert_eq!(e.handle(Event::HotkeyPressed { t: 0 }), Err("show"));
+    assert_eq!(e.next_deadline(), None);
+    full(&mut e, 500);
     e.platform_mut().fail = Some("hide");
     let id = e.platform().menus.last().unwrap().id;
     assert_eq!(
@@ -475,20 +506,22 @@ fn fallible_effects_do_not_panic_or_lose_required_restoration() {
 fn focus_change_during_write_cancels_paste_but_still_restores() {
     let mut e = engine("WINWORD.EXE", "# original");
     let original = e.platform().clipboard.clone();
-    hot(&mut e, 0);
     e.platform_mut().focus_after_write = Some(app("other"));
-    timer(&mut e, 400);
+    hot(&mut e, 0);
     assert_eq!(e.platform().pastes, 0);
-    assert_eq!(e.next_deadline(), Some(550));
-    timer(&mut e, 550);
+    assert_eq!(e.next_deadline(), Some(150));
+    assert_eq!(e.next_deadline(), Some(150));
+    timer(&mut e, 149);
+    assert_ne!(e.platform().clipboard, original);
+    timer(&mut e, 150);
     assert_eq!(e.platform().clipboard, original);
+    assert_eq!(e.next_deadline(), None);
 }
 
 #[test]
 fn cancellation_hide_failure_invalidates_menu_callbacks() {
     let mut e = engine("unknown", "# original");
-    hot(&mut e, 0);
-    hot(&mut e, 1);
+    full(&mut e, 0);
     let id = e.platform().menus.last().unwrap().id;
     e.platform_mut().fail = Some("hide");
     assert_eq!(e.handle(Event::Cancel { t: 2 }), Err("hide"));
@@ -506,8 +539,7 @@ fn undo_failures_are_once_only_and_restore_when_written() {
     for effect in ["undo", "write", "paste"] {
         let mut e = engine("WINWORD.EXE", "# original");
         hot(&mut e, 0);
-        timer(&mut e, 400);
-        timer(&mut e, 550);
+        timer(&mut e, 150);
         let current = Snapshot::text("new user's clipboard");
         e.platform_mut().clipboard = current.clone();
         e.platform_mut().fail = Some(effect);
@@ -551,9 +583,6 @@ fn menu_order_shortcuts_defaults_and_content_labels() {
             },
         );
         hot(&mut e, 0);
-        if silent_mode {
-            timer(&mut e, 400);
-        }
         let menu = e.platform().menus.last().unwrap();
         assert_eq!(
             menu.formats
@@ -580,8 +609,7 @@ fn menu_order_shortcuts_defaults_and_content_labels() {
     ] {
         let mut e = engine("WINWORD.EXE", "");
         e.platform_mut().clipboard = snapshot;
-        hot(&mut e, 0);
-        hot(&mut e, 1);
+        full(&mut e, 0);
         let menu = e.platform().menus.last().unwrap();
         assert_eq!(menu.default_choice, Choice::Original);
         assert_eq!(menu.content_label, label);
@@ -589,14 +617,27 @@ fn menu_order_shortcuts_defaults_and_content_labels() {
 }
 
 #[test]
-fn late_second_press_consumes_pending_only_once() {
+fn primary_repeats_do_not_arbitrate_or_open_full_and_explicit_full_respects_restoration() {
     let mut e = engine("WINWORD.EXE", "# title");
     hot(&mut e, 0);
-    hot(&mut e, 401);
-    timer(&mut e, 402);
     assert_eq!(e.platform().pastes, 1);
-    timer(&mut e, 551);
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(e.next_deadline(), Some(150));
+    hot(&mut e, 1);
+    full(&mut e, 2);
     assert_eq!(e.platform().pastes, 1);
+    assert!(e.platform().menus.is_empty());
+    timer(&mut e, 150);
+    full(&mut e, 151);
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
+    assert_eq!(e.platform().pastes, 1);
+    assert_eq!(e.next_deadline(), None);
+    key(&mut e, 152, MenuKey::Escape);
+    hot(&mut e, 153);
+    assert_eq!(e.platform().pastes, 2);
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.next_deadline(), Some(303));
 }
 
 #[test]
@@ -632,8 +673,7 @@ fn each_selectable_format_works_and_invalid_utf8_is_raw() {
                 ..Default::default()
             },
         );
-        hot(&mut e, 0);
-        hot(&mut e, 1);
+        full(&mut e, 0);
         choose(&mut e, 2, Choice::Format(format));
         assert_eq!(e.platform().pastes, 1);
         assert_eq!(e.config().recent_pastes[0].format, Some(format));
@@ -644,8 +684,10 @@ fn each_selectable_format_works_and_invalid_utf8_is_raw() {
         .formats
         .insert(TEXT_PLAIN.into(), vec![255, 0]);
     hot(&mut e, 0);
-    timer(&mut e, 400);
+    assert_eq!(e.platform().pastes, 1);
+    assert!(e.platform().menus.is_empty());
     assert!(e.platform().writes.is_empty());
+    assert_eq!(e.next_deadline(), None);
 }
 
 fn opaque_original(text: &str) -> Snapshot {
@@ -673,14 +715,17 @@ fn silent_numbered_rule_renders_expected_chinese_and_restores_all_formats() {
     let original = opaque_original("# 项目周报\r\n\r\n## 本周进展\r\n- **完成**\r\n");
     e.platform_mut().clipboard = original.clone();
     hot(&mut e, 0);
-    timer(&mut e, 400);
     assert!(e.platform().menus.is_empty());
     assert_eq!(
         e.platform().pasted,
         vec![Snapshot::text("项目周报\n\n一、本周进展\n（一）完成")]
     );
-    timer(&mut e, 550);
+    assert_eq!(e.next_deadline(), Some(150));
+    timer(&mut e, 149);
+    assert_ne!(e.platform().clipboard, original);
+    timer(&mut e, 150);
     assert_eq!(e.platform().clipboard, original);
+    assert_eq!(e.next_deadline(), None);
 }
 
 #[test]
@@ -690,7 +735,6 @@ fn silent_markdown_rule_preserves_source_and_restores_opaque_original() {
     let original = opaque_original(source);
     e.platform_mut().clipboard = original.clone();
     hot(&mut e, 0);
-    timer(&mut e, 400);
     assert!(e.platform().menus.is_empty());
     assert_eq!(
         e.platform().pasted[0].formats[TEXT_MARKDOWN],
@@ -700,8 +744,12 @@ fn silent_markdown_rule_preserves_source_and_restores_opaque_original() {
         e.platform().pasted[0].formats[TEXT_PLAIN],
         source.as_bytes()
     );
-    timer(&mut e, 550);
+    assert_eq!(e.next_deadline(), Some(150));
+    timer(&mut e, 149);
+    assert_ne!(e.platform().clipboard, original);
+    timer(&mut e, 150);
     assert_eq!(e.platform().clipboard, original);
+    assert_eq!(e.next_deadline(), None);
 }
 
 #[test]
@@ -711,8 +759,10 @@ fn numeric_choices_one_through_five_restore_exact_original() {
         let original = opaque_original("# Title\r\n\r\n## Heading\r\n\r\n**bold**\r\n");
         e.platform_mut().clipboard = original.clone();
         hot(&mut e, 0);
-        timer(&mut e, 400);
-        key(&mut e, 401, MenuKey::Digit(digit));
+        assert_eq!(e.platform().menus[0].kind, MenuKind::Secondary);
+        assert_eq!(e.platform().pastes, 0);
+        assert_eq!(e.next_deadline(), None);
+        key(&mut e, 1, MenuKey::Digit(digit));
         assert_eq!(e.platform().pastes, 1);
         assert_eq!(e.platform().hides, 1);
         let pasted = &e.platform().pasted[0];
@@ -734,7 +784,14 @@ fn numeric_choices_one_through_five_restore_exact_original() {
             ),
             _ => unreachable!(),
         }
-        timer(&mut e, 551);
+        if digit == 1 {
+            assert_eq!(e.next_deadline(), None);
+        } else {
+            assert_eq!(e.next_deadline(), Some(151));
+            timer(&mut e, 150);
+            assert_ne!(e.platform().clipboard, original);
+        }
+        timer(&mut e, 151);
         assert_eq!(e.platform().clipboard, original, "choice {digit}");
         assert_eq!(e.next_deadline(), None);
     }
@@ -745,13 +802,22 @@ fn escape_cancels_secondary_and_full_without_any_clipboard_effect() {
     for full in [false, true] {
         let mut e = engine("unknown", "# Title");
         let original = e.platform().clipboard.clone();
-        hot(&mut e, 0);
         if full {
-            hot(&mut e, 1);
+            self::full(&mut e, 0);
         } else {
-            timer(&mut e, 400);
+            hot(&mut e, 0);
         }
-        key(&mut e, 401, MenuKey::Escape);
+        assert_eq!(e.platform().menus.len(), 1);
+        assert_eq!(
+            e.platform().menus[0].kind,
+            if full {
+                MenuKind::Full
+            } else {
+                MenuKind::Secondary
+            }
+        );
+        assert_eq!(e.next_deadline(), None);
+        key(&mut e, 1, MenuKey::Escape);
         timer(&mut e, 1000);
         assert_eq!(e.platform().clipboard, original);
         assert!(e.platform().writes.is_empty());
@@ -790,7 +856,6 @@ fn unchecked_remember_does_not_create_rule_and_checked_choice_survives_toml() {
     for checked in [false, true] {
         let mut e = engine("custom-editor", "# Title");
         hot(&mut e, 0);
-        timer(&mut e, 400);
         let menu = e.platform().menus.last().unwrap().clone();
         assert!(menu.show_remember);
         assert!(!menu.remember);
@@ -819,7 +884,6 @@ fn unchecked_remember_does_not_create_rule_and_checked_choice_survives_toml() {
             },
         );
         hot(&mut reloaded, 1000);
-        timer(&mut reloaded, 1400);
         assert_eq!(reloaded.platform().pastes, usize::from(checked));
         assert_eq!(reloaded.platform().menus.len(), usize::from(!checked));
     }
@@ -831,8 +895,7 @@ fn undo_effect_order_is_undo_then_original_paste_then_exact_current_restore() {
     let original = opaque_original("# Original\r\n");
     e.platform_mut().clipboard = original.clone();
     hot(&mut e, 0);
-    timer(&mut e, 400);
-    timer(&mut e, 550);
+    timer(&mut e, 150);
     let current = opaque_original("new clipboard\r\n");
     e.platform_mut().clipboard = current.clone();
     e.platform_mut().effects.clear();
@@ -859,16 +922,22 @@ fn injected_clock_drives_deadlines_without_wall_clock_or_sleep() {
     let mut e = engine("notepad.exe", "# Title");
     e.platform_mut().now = 1000;
     e.hotkey_pressed().unwrap();
-    assert_eq!(e.next_deadline(), Some(1400));
-    e.platform_mut().now = 1399;
-    e.tick().unwrap();
-    assert_eq!(e.platform().pastes, 0);
-    e.platform_mut().now = 1400;
-    e.tick().unwrap();
     assert_eq!(e.platform().pastes, 1);
-    e.platform_mut().now = 1550;
+    assert!(e.platform().menus.is_empty());
+    assert_eq!(e.next_deadline(), Some(1150));
+    e.platform_mut().now = 1149;
+    e.tick().unwrap();
+    assert_ne!(e.platform().clipboard, Snapshot::text("# Title"));
+    e.platform_mut().now = 1150;
     e.tick().unwrap();
     assert_eq!(e.platform().clipboard, Snapshot::text("# Title"));
+    assert_eq!(e.next_deadline(), None);
+    e.platform_mut().now = 1200;
+    e.full_menu_hotkey_pressed().unwrap();
+    assert_eq!(e.platform().menus.len(), 1);
+    assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
+    assert_eq!(e.platform().pastes, 1);
+    assert_eq!(e.next_deadline(), None);
 }
 
 #[test]
@@ -903,12 +972,10 @@ fn disabled_mapped_format_does_not_become_an_unselectable_menu_default() {
 #[test]
 fn stale_escape_and_invalid_accelerators_cannot_dismiss_or_paste_new_menu() {
     let mut e = engine("unknown", "# Title");
-    hot(&mut e, 0);
-    hot(&mut e, 1);
+    full(&mut e, 0);
     let old_id = e.platform().menus[0].id;
     key(&mut e, 2, MenuKey::Escape);
-    hot(&mut e, 3);
-    hot(&mut e, 4);
+    full(&mut e, 3);
     e.handle(Event::MenuKey {
         t: 5,
         id: old_id,
@@ -922,4 +989,85 @@ fn stale_escape_and_invalid_accelerators_cannot_dismiss_or_paste_new_menu() {
     assert_eq!(e.platform().pastes, 0);
     key(&mut e, 7, MenuKey::Enter);
     assert_eq!(e.platform().pastes, 1);
+}
+
+#[test]
+fn unknown_primary_immediately_opens_secondary_for_all_content() {
+    for snapshot in [
+        Snapshot::text("# heading"),
+        Snapshot::text("ordinary text"),
+        Snapshot::text(format!("# {}", "x".repeat(MAX_TEXT_BYTES))),
+        Snapshot {
+            formats: [("image/png".into(), vec![137, 80, 78, 71])].into(),
+        },
+        Snapshot {
+            formats: [(TEXT_PLAIN.into(), vec![255, 0])].into(),
+        },
+        Snapshot::default(),
+    ] {
+        let convertible = snapshot.source_text().is_some();
+        let markdown = snapshot
+            .source_text()
+            .is_some_and(cleancopy_core::is_markdown);
+        let mut e = engine("unknown", "");
+        e.platform_mut().clipboard = snapshot.clone();
+        hot(&mut e, 0);
+        assert_eq!(e.platform().menus.len(), 1);
+        let menu = &e.platform().menus[0];
+        assert_eq!(menu.kind, MenuKind::Secondary);
+        assert!(menu.show_remember);
+        assert!(menu.formats.iter().all(|item| item.enabled == convertible));
+        if !markdown {
+            assert_eq!(menu.default_choice, Choice::Original);
+            assert!(menu.formats.iter().all(|item| item.muted));
+        }
+        assert_eq!(e.platform().pastes, 0);
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().clipboard, snapshot);
+        assert_eq!(e.next_deadline(), None);
+        key(&mut e, 1, MenuKey::Enter);
+        assert_eq!(e.platform().pastes, 1);
+        if !markdown {
+            assert_eq!(e.platform().pasted, vec![snapshot]);
+            assert!(e.platform().writes.is_empty());
+            assert_eq!(e.next_deadline(), None);
+        }
+    }
+}
+
+#[test]
+fn explicit_full_hotkey_overrides_silent_mode_for_all_content() {
+    for silent_mode in [false, true] {
+        for (exe, snapshot) in [
+            ("WINWORD.EXE", Snapshot::text("# heading")),
+            ("unknown", Snapshot::text("# heading")),
+            ("unknown", Snapshot::text("ordinary text")),
+            (
+                "WINWORD.EXE",
+                Snapshot {
+                    formats: [("image/png".into(), vec![137, 80])].into(),
+                },
+            ),
+        ] {
+            let mut e = Engine::new(
+                Config {
+                    silent_mode,
+                    ..Config::default()
+                },
+                Mock {
+                    app: app(exe),
+                    clipboard: snapshot.clone(),
+                    now: 42,
+                    ..Mock::default()
+                },
+            );
+            e.full_menu_hotkey_pressed().unwrap();
+            assert_eq!(e.platform().menus.len(), 1);
+            assert_eq!(e.platform().menus[0].kind, MenuKind::Full);
+            assert_eq!(e.platform().pastes, 0);
+            assert!(e.platform().writes.is_empty());
+            assert_eq!(e.platform().clipboard, snapshot);
+            assert_eq!(e.next_deadline(), None);
+        }
+    }
 }

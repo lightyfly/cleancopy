@@ -493,8 +493,8 @@ pub fn tray(ctx: &egui::Context, config: &Config, enabled: &mut bool) -> Option<
             for (index, (icon, label, hint, selected)) in [
                 (
                     "✦",
-                    "唤出粘贴菜单",
-                    config.hotkey.as_str(),
+                    "完整粘贴菜单",
+                    config.full_menu_hotkey.as_str(),
                     TrayAction::ShowMenu,
                 ),
                 ("↺", "撤销上次转换", "", TrayAction::Undo),
@@ -839,6 +839,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tray_displays_the_full_menu_shortcut_not_the_paste_shortcut() {
+        let ctx = egui::Context::default();
+        let config = Config {
+            hotkey: "Ctrl+Shift+P".into(),
+            full_menu_hotkey: "Ctrl+Alt+M".into(),
+            ..Default::default()
+        };
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(720.0, 520.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                let _ = tray(ctx, &config, &mut true);
+            },
+        );
+        let text: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(text.contains(&config.full_menu_hotkey.as_str()));
+        assert!(!text.contains(&config.hotkey.as_str()));
     }
 
     #[test]

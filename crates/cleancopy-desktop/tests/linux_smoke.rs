@@ -43,7 +43,7 @@ fn wait_for(description: &str, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while !condition() {
         assert!(Instant::now() < deadline, "timed out: {description}");
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(5));
     }
 }
 fn xdo(display: &str, args: &[&str]) {
@@ -314,9 +314,13 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
     assert!(!status.success());
     let conflict_log = fs::read_to_string(dir.path().join("conflict.log")).unwrap();
     assert!(conflict_log.contains("BadAccess"), "{conflict_log}");
-    // Full menu is forced by a double press, without taking focus from the peer.
+    // The dedicated native full-menu hotkey must not run a conversion or steal focus.
     xdo(&display, &["mousemove", "350", "200"]);
-    xdo(&display, &["key", "ctrl+shift+v", "ctrl+shift+v"]);
+    let menu_started = Instant::now();
+    xdo(
+        &display,
+        &["key", "--clearmodifiers", "--delay", "0", "ctrl+alt+v"],
+    );
     let visible_menu = || {
         Command::new("xdotool")
             .env("DISPLAY", &display)
@@ -343,8 +347,25 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         .parse()
         .unwrap();
     {
-        use x11rb::{connection::Connection, protocol::xproto::ConnectionExt};
+        use x11rb::{
+            connection::Connection,
+            protocol::xproto::{ConnectionExt, ImageFormat},
+        };
         let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+        // Mapping alone is not evidence of visible menu contents. Observe the
+        // native drawable's collapsed format-panel background after painting.
+        wait_for("painted full menu", || {
+            let pixel = conn
+                .get_image(ImageFormat::Z_PIXMAP, menu_window, 580, 100, 1, 1, u32::MAX)
+                .unwrap()
+                .reply()
+                .unwrap();
+            pixel.data[..3] == [242, 237, 237]
+        });
+        println!(
+            "MEASURE Ctrl+Alt+V→full-menu-visible: {:.2} ms (native mapped window + expected painted panel)",
+            menu_started.elapsed().as_secs_f64() * 1000.0
+        );
         let attributes = conn
             .get_window_attributes(menu_window)
             .unwrap()
@@ -380,8 +401,157 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
     xdo(&display, &["key", "Escape"]);
     wait_for("menu dismissal", || !visible_menu().status.success());
     assert_eq!(focus(), window.trim());
+    assert!(
+        !app.join("paste-3.bin").exists(),
+        "Ctrl+Alt+V must show the full menu without issuing a paste"
+    );
+    // Reload both configured bindings in the running native driver. These are
+    // function keys so an ungrabbed chord cannot accidentally paste in the peer.
+    // Avoid Ctrl+Alt+Fn: XKB consumes those as virtual-terminal switches before
+    // clients receive KeyPress, even under Xvfb with a successful passive grab.
+    let mut updated = config.clone();
+    updated.hotkey = "Ctrl+Shift+F8".into();
+    updated.full_menu_hotkey = "Ctrl+Super+F9".into();
+    updated.save(&config_path).unwrap();
+    // This allows the file-reload poll to run, not any engine press arbitration.
+    thread::sleep(Duration::from_millis(750));
+    xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+F8"]);
+    wait_for("live configured primary paste", || {
+        app.join("paste-3.bin").exists()
+    });
+    assert_eq!(
+        fs::read(app.join("paste-3.bin")).unwrap(),
+        expected.as_bytes()
+    );
+    wait_for("restoration after configured primary", || {
+        read_target(&peer, &display, "UTF8_STRING") == source
+    });
+    xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);
+    wait_for("live configured full-menu binding", || {
+        visible_menu().status.success()
+    });
+    xdo(&display, &["key", "Escape"]);
+    wait_for("configured menu dismissal", || {
+        !visible_menu().status.success()
+    });
+
+    // Extra modifiers must not be mistaken for either configured chord.
+    for chord in ["ctrl+shift+super+F8", "ctrl+super+shift+F9"] {
+        xdo(&display, &["key", "--clearmodifiers", chord]);
+        let until = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < until {
+            assert!(
+                !visible_menu().status.success(),
+                "unexpected activation: {chord}"
+            );
+            assert!(
+                !app.join("paste-4.bin").exists(),
+                "unexpected paste: {chord}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    // Reserve the replacement full-menu chord in an independent X client.
+    // The update adds its primary first, so this also tests partial-grab cleanup.
+    {
+        use x11rb::{
+            connection::Connection,
+            protocol::xproto::{ConnectionExt, GrabMode, ModMask},
+        };
+        let (conn, screen) = x11rb::connect(Some(&display)).unwrap();
+        let root_window = conn.setup().roots[screen].root;
+        let setup = conn.setup();
+        let mapping = conn
+            .get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let keycode = |symbol| {
+            mapping
+                .keysyms
+                .chunks(usize::from(mapping.keysyms_per_keycode))
+                .position(|symbols| symbols.contains(&symbol))
+                .map(|index| setup.min_keycode + u8::try_from(index).unwrap())
+                .expect("function key in native keyboard map")
+        };
+        // The released default binding must be available to another client.
+        // Grab it here before injecting it: the target peer intentionally treats
+        // any Ctrl+V (including Alt) as paste, so forwarding it is not a daemon paste.
+        conn.grab_key(
+            false,
+            root_window,
+            ModMask::CONTROL | ModMask::M1,
+            keycode(0x76),
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+        )
+        .unwrap()
+        .check()
+        .expect("live reload must release the old full-menu binding");
+        xdo(&display, &["key", "--clearmodifiers", "ctrl+alt+v"]);
+        thread::sleep(Duration::from_millis(150));
+        assert!(!visible_menu().status.success());
+        assert!(!app.join("paste-4.bin").exists());
+        let blocked = keycode(0xffc9); // F12
+        conn.grab_key(
+            false,
+            root_window,
+            ModMask::CONTROL | ModMask::M4,
+            blocked,
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        let mut conflicting = updated.clone();
+        conflicting.hotkey = "Ctrl+Shift+F10".into();
+        conflicting.full_menu_hotkey = "Ctrl+Super+F12".into();
+        conflicting.save(&config_path).unwrap();
+        wait_for("live hotkey conflict reported", || {
+            fs::read_to_string(&runner_log).is_ok_and(|text| {
+                text.contains("CleanCopy settings:") && text.contains("BadAccess")
+            })
+        });
+        xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+F8"]);
+        wait_for("primary retained after failed update", || {
+            app.join("paste-4.bin").exists()
+        });
+        assert_eq!(
+            fs::read(app.join("paste-4.bin")).unwrap(),
+            expected.as_bytes()
+        );
+        wait_for("restoration after rollback", || {
+            read_target(&peer, &display, "UTF8_STRING") == source
+        });
+        xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);
+        wait_for("full-menu retained after failed update", || {
+            visible_menu().status.success()
+        });
+        xdo(&display, &["key", "Escape"]);
+        wait_for("rollback menu dismissal", || {
+            !visible_menu().status.success()
+        });
+        // Stop retries before probing cleanup of the partially registered F10.
+        updated.save(&config_path).unwrap();
+        thread::sleep(Duration::from_millis(750));
+        conn.grab_key(
+            false,
+            root_window,
+            ModMask::CONTROL | ModMask::SHIFT,
+            keycode(0xffc7),
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+        )
+        .unwrap()
+        .check()
+        .expect("failed update must release newly added F10 grab");
+    }
+    assert_eq!(focus(), window.trim());
+    println!("PASS configured hotkey live update, exact modifier matching, conflict rollback + partial-grab cleanup");
     println!(
-        "native Ctrl+Shift+V → {} formatted bytes; restored all 4 native targets byte-exactly; CapsLock+NumLock+held Shift, BadAccess conflict, pointer-positioned nonfocus menu/Escape passed",
+        "native Ctrl+Shift+V → {} formatted bytes; restored all 4 native targets byte-exactly; CapsLock+NumLock+held Shift, BadAccess conflict, native Ctrl+Alt+V pointer-positioned nonfocus menu/Escape passed",
         received.len()
     );
 }

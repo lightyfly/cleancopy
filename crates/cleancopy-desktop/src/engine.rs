@@ -1,8 +1,8 @@
 //! Deterministic, GUI-free desktop paste engine.
 //!
-//! Drivers supply nondecreasing Unix millisecond timestamps, dispatch hotkeys
-//! before timers sharing a timestamp (the double-press window is inclusive), and
-//! schedule [`Engine::next_deadline`]. Stale events are ignored. Menu callbacks
+//! Drivers supply nondecreasing Unix millisecond timestamps and schedule
+//! [`Engine::next_deadline`] for clipboard restoration. Hotkeys act immediately.
+//! Stale events are ignored. Menu callbacks
 //! must carry the displayed menu ID; menus MUST be nonactivating. App identity
 //! fields must identify the actual application, not a window title. Clipboard
 //! adapters preserve every native format in `Snapshot`, additionally exposing
@@ -14,7 +14,6 @@ use cleancopy_core::{
 };
 use std::collections::BTreeMap;
 
-pub const DOUBLE_PRESS_MS: u64 = 400;
 pub const RESTORE_DELAY_MS: u64 = 150;
 pub const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
 pub const TEXT_PLAIN: &str = "text/plain";
@@ -117,6 +116,9 @@ pub enum Event {
     HotkeyPressed {
         t: u64,
     },
+    FullMenuHotkeyPressed {
+        t: u64,
+    },
     Timer {
         t: u64,
     },
@@ -150,6 +152,7 @@ impl Event {
         match self {
             Self::MenuKey { t, .. }
             | Self::HotkeyPressed { t }
+            | Self::FullMenuHotkeyPressed { t }
             | Self::Timer { t }
             | Self::MenuChoice { t, .. }
             | Self::Remember { t, .. }
@@ -166,10 +169,6 @@ struct Capture {
     original: Snapshot,
     markdown: bool,
     convertible: bool,
-}
-struct Pending {
-    capture: Capture,
-    deadline: u64,
 }
 struct Menu {
     capture: Capture,
@@ -194,7 +193,6 @@ pub struct Engine<P: Platform> {
     now: u64,
     serial: u64,
     paused: bool,
-    pending: Option<Pending>,
     menu: Option<Menu>,
     restoring: Option<Restoration>,
     undo: Option<Undo>,
@@ -207,7 +205,6 @@ impl<P: Platform> Engine<P> {
             now: 0,
             serial: 0,
             paused: false,
-            pending: None,
             menu: None,
             restoring: None,
             undo: None,
@@ -216,7 +213,7 @@ impl<P: Platform> Engine<P> {
     pub fn config(&self) -> &Config {
         &self.config
     }
-    /// Apply settings only after cancelling pending menu/capture work. A clipboard
+    /// Apply settings only after cancelling an open menu. A clipboard
     /// restoration already in flight is retained and serviced normally.
     pub fn update_config(&mut self, config: Config) -> Result<(), P::Error> {
         self.cancel()?;
@@ -230,14 +227,17 @@ impl<P: Platform> Engine<P> {
         &mut self.platform
     }
     pub fn next_deadline(&self) -> Option<u64> {
-        self.restoring
-            .as_ref()
-            .map(|r| r.deadline)
-            .or_else(|| self.pending.as_ref().map(|p| p.deadline))
+        self.restoring.as_ref().map(|r| r.deadline)
     }
     /// Dispatch a native hotkey using the injected clock.
     pub fn hotkey_pressed(&mut self) -> Result<(), P::Error> {
         self.handle(Event::HotkeyPressed {
+            t: self.platform.now(),
+        })
+    }
+    /// Open the full menu immediately using the injected clock.
+    pub fn full_menu_hotkey_pressed(&mut self) -> Result<(), P::Error> {
+        self.handle(Event::FullMenuHotkeyPressed {
             t: self.platform.now(),
         })
     }
@@ -278,19 +278,7 @@ impl<P: Platform> Engine<P> {
                 if self.restoring.as_ref().is_some_and(|r| t >= r.deadline) {
                     return self.restore(t);
                 }
-                if self.pending.as_ref().is_some_and(|p| t >= p.deadline) {
-                    let pending = self.pending.take().unwrap();
-                    if !pending.capture.markdown {
-                        return self.paste(pending.capture, None, false, t);
-                    }
-                    if let Some(format) = self.config.format_for(&pending.capture.app) {
-                        self.paste(pending.capture, Some(format), false, t)
-                    } else {
-                        self.open_menu(pending.capture, MenuKind::Secondary)
-                    }
-                } else {
-                    Ok(())
-                }
+                Ok(())
             }
             Event::Cancel { .. } => self.cancel(),
             Event::Pause { until, .. } => {
@@ -349,26 +337,13 @@ impl<P: Platform> Engine<P> {
                 self.cancel()?;
                 self.undo(t)
             }
-            Event::HotkeyPressed { .. } => {
+            Event::HotkeyPressed { .. } | Event::FullMenuHotkeyPressed { .. } => {
                 if self.restoring.is_some()
                     || self.menu.is_some()
                     || self.paused
                     || self.config.paused_until.is_some_and(|until| t < until)
                 {
                     return Ok(());
-                }
-                if let Some(pending) = self.pending.take() {
-                    if t <= pending.deadline {
-                        return self.open_menu(pending.capture, MenuKind::Full);
-                    }
-                    // A late driver timer must not turn a second press into two pastes.
-                    if !pending.capture.markdown {
-                        return self.paste(pending.capture, None, false, t);
-                    }
-                    return match self.config.format_for(&pending.capture.app) {
-                        Some(format) => self.paste(pending.capture, Some(format), false, t),
-                        None => self.open_menu(pending.capture, MenuKind::Secondary),
-                    };
                 }
                 let app = self.platform.frontmost_app()?;
                 let original = self.platform.read_clipboard()?;
@@ -380,20 +355,19 @@ impl<P: Platform> Engine<P> {
                     convertible,
                     markdown,
                 };
-                if self.config.silent_mode {
-                    self.pending = Some(Pending {
-                        capture,
-                        deadline: t.saturating_add(DOUBLE_PRESS_MS),
-                    });
-                    Ok(())
-                } else {
+                if matches!(event, Event::FullMenuHotkeyPressed { .. }) || !self.config.silent_mode
+                {
                     self.open_menu(capture, MenuKind::Full)
+                } else if let Some(format) = self.config.format_for(&capture.app) {
+                    let format = capture.markdown.then_some(format);
+                    self.paste(capture, format, false, t)
+                } else {
+                    self.open_menu(capture, MenuKind::Secondary)
                 }
             }
         }
     }
     fn cancel(&mut self) -> Result<(), P::Error> {
-        self.pending = None;
         if self.menu.take().is_some() {
             // Invalidate callbacks even when the adapter fails to hide the menu.
             self.platform.hide_menu()?;
@@ -689,10 +663,9 @@ mod tests {
             let mut engine = engine();
             let original = engine.platform().clipboard.clone();
             engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
-            engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
             let written = engine.platform().clipboard.clone();
             assert_ne!(written, original);
-            let mut deadline = DOUBLE_PRESS_MS + RESTORE_DELAY_MS;
+            let mut deadline = RESTORE_DELAY_MS;
             if retry {
                 engine.platform_mut().fail_write = true;
                 assert_eq!(engine.handle(Event::Timer { t: deadline }), Err("write"));
@@ -728,13 +701,12 @@ mod tests {
     fn update_config_does_not_restore_over_newer_clipboard() {
         let mut engine = engine();
         engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
-        engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
         engine.update_config(Config::default()).unwrap();
         let newer = Snapshot::text("new external copy");
         engine.platform_mut().clipboard = newer.clone();
         engine
             .handle(Event::Timer {
-                t: DOUBLE_PRESS_MS + RESTORE_DELAY_MS,
+                t: RESTORE_DELAY_MS,
             })
             .unwrap();
         assert_eq!(engine.platform().clipboard, newer);
@@ -743,30 +715,37 @@ mod tests {
     }
 
     #[test]
-    fn update_config_cancels_pending_capture_before_applying_settings() {
+    fn update_config_cancels_full_menu_before_applying_settings() {
         let mut engine = engine();
         let original = engine.platform().clipboard.clone();
-        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
-        assert_eq!(engine.next_deadline(), Some(DOUBLE_PRESS_MS));
+        engine
+            .handle(Event::FullMenuHotkeyPressed { t: 0 })
+            .unwrap();
+        assert_eq!(engine.platform().menus.len(), 1);
+        let id = engine.platform().menus[0].id;
+        assert_eq!(engine.next_deadline(), None);
         let config = Config {
             silent_mode: false,
             ..Config::default()
         };
         engine.update_config(config).unwrap();
+        assert_eq!(engine.platform().hides, 1);
         assert_eq!(engine.next_deadline(), None);
-        engine.handle(Event::Timer { t: DOUBLE_PRESS_MS }).unwrap();
-        assert_eq!(engine.platform().pastes, 0);
-        assert!(engine.platform().writes.is_empty());
-        assert!(engine.platform().menus.is_empty());
-        assert_eq!(engine.platform().clipboard, original);
-
         engine
-            .handle(Event::HotkeyPressed {
-                t: DOUBLE_PRESS_MS + 1,
+            .handle(Event::MenuKey {
+                t: 1,
+                id,
+                key: MenuKey::Enter,
             })
             .unwrap();
-        assert_eq!(engine.platform().menus.len(), 1);
-        assert_eq!(engine.platform().menus[0].kind, MenuKind::Full);
+        engine.handle(Event::Timer { t: 2 }).unwrap();
+        assert_eq!(engine.platform().pastes, 0);
+        assert!(engine.platform().writes.is_empty());
+        assert_eq!(engine.platform().clipboard, original);
+
+        engine.handle(Event::HotkeyPressed { t: 3 }).unwrap();
+        assert_eq!(engine.platform().menus.len(), 2);
+        assert_eq!(engine.platform().menus[1].kind, MenuKind::Full);
         assert_eq!(engine.next_deadline(), None);
     }
 
@@ -775,8 +754,9 @@ mod tests {
         for fail_hide in [false, true] {
             let mut engine = engine();
             let original = engine.platform().clipboard.clone();
-            engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
-            engine.handle(Event::HotkeyPressed { t: 1 }).unwrap();
+            engine
+                .handle(Event::FullMenuHotkeyPressed { t: 0 })
+                .unwrap();
             let id = engine.platform().menus[0].id;
             engine.platform_mut().fail_hide = fail_hide;
             let config = Config {
@@ -811,7 +791,7 @@ mod tests {
                     id,
                     key: MenuKey::Escape,
                 },
-                Event::Timer { t: DOUBLE_PRESS_MS },
+                Event::Timer { t: 6 },
             ] {
                 engine.handle(event).unwrap();
             }
@@ -829,17 +809,13 @@ mod tests {
                     ..Config::default()
                 })
                 .unwrap();
-            engine
-                .handle(Event::HotkeyPressed {
-                    t: DOUBLE_PRESS_MS + 1,
-                })
-                .unwrap();
+            engine.handle(Event::HotkeyPressed { t: 7 }).unwrap();
             assert_eq!(engine.platform().hides, 1);
             assert_eq!(engine.platform().menus.len(), 2);
             assert_ne!(engine.platform().menus[1].id, id);
             engine
                 .handle(Event::MenuKey {
-                    t: DOUBLE_PRESS_MS + 2,
+                    t: 8,
                     id,
                     key: MenuKey::Escape,
                 })

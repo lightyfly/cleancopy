@@ -27,7 +27,10 @@ merging with daemon updates; errors appear in an error window with a retry butto
 Previews never load or save user settings. Silent mode defaults **on**. Preview
 paste/undo effects are simulated; the default Linux daemon performs real actions.
 The tray preview displays menu content without registering a second tray item.
-Native Ctrl+Shift+V currently remains fixed even if the saved hotkey label changes.
+Smart paste and the full paste menu have separate configurable, persisted
+shortcuts and separate Settings recorders. The Linux daemon uses both configured
+bindings; ordinary Ctrl/Cmd+V is untouched. These are behavior contracts, not a
+claim that new bindings have passed native runtime acceptance.
 
 CJK fonts are loaded at runtime, preferring Noto Sans CJK under
 `/usr/share/fonts`, with fallback discovery under that directory and
@@ -68,16 +71,24 @@ Wayland clipboard dependencies from the X11 build.
 
 ## Product decisions
 
-- Silent mode defaults **on**. A single shortcut resolves the frontmost app's
-  configured format. Unknown apps open the secondary format menu; the remember
-  checkbox records a stable app identifier, never its display name.
-- A second shortcut within **400 ms** opens the full original/formatted/undo
-  menu, rather than pasting. Silent single presses therefore deliberately wait
-  400 ms. This supersedes the original design's double-press-to-execute behavior
-  and its default-disabled silent mode. When silent mode is disabled, the first
-  press opens a menu immediately.
-- The native shortcut defaults to Cmd+Shift+V on macOS (configured as
-  `Super+Shift+V`) and Ctrl+Shift+V elsewhere. Ordinary Cmd/Ctrl+V is untouched.
+- Silent mode defaults **on**. Smart paste immediately resolves the frontmost
+  app's configured format, with no double-press detection or 400 ms wait. Unknown
+  apps with the popup fallback open the secondary format menu; a fixed-format
+  fallback pastes directly. The remember checkbox records a stable app identifier,
+  never its display name. Non-Markdown content defaults to original paste.
+- Smart paste defaults to **Ctrl+Shift+V**, or **Cmd+Shift+V** on macOS
+  (`Super+Shift+V`). With silent mode disabled, it opens the full menu immediately.
+- The independent full-menu shortcut defaults to **Ctrl+Alt+V**, or
+  **Cmd+Option+V** on macOS (`Super+Alt+V`). It opens the full
+  original/formatted/undo menu directly, regardless of silent mode, without first
+  pasting. A second smart-paste press is not a full-menu gesture. Pause, an
+  already-open menu, and pending clipboard restoration still gate both actions.
+- Settings exposes separate “智能粘贴” and “完整粘贴菜单” recorders. Tray menu
+  wording and its shortcut hint refer to the full-menu action, not smart paste.
+  First-use guidance explains both shortcuts: copy and smart-paste by app rules,
+  or use the full-menu shortcut/tray to choose before pasting.
+- Ordinary Cmd/Ctrl+V is untouched. macOS shortcut defaults describe the product
+  contract, not an implemented native macOS adapter.
 - Clipboard formats are raw bytes, not reconstructed from plain text. A native
   adapter must enumerate and preserve **all** original formats, expose canonical
   UTF-8 text formats to the engine, and translate generated HTML/RTF to its
@@ -95,6 +106,14 @@ individually enabled secondary formats, a popup or fixed-format fallback, timed
 pause, and the two most recent paste records. Missing files load defaults;
 malformed or unreadable files return errors. Saving writes a temporary file in
 the destination directory, syncs it, and atomically replaces the destination.
+
+`hotkey` (smart paste) and `full_menu_hotkey` (full menu) are independent TOML
+fields, saved and merged separately. Older files without `full_menu_hotkey` use
+its platform default without changing a customized `hotkey`. Each Settings
+recorder updates only its own field; Escape cancels recording, and choosing the
+same binding for both actions is rejected. Restore defaults resets both bindings.
+Native registration conflicts must be reported rather than silently treating a
+saved label as an active shortcut.
 
 Default rules include TextEdit/notepad/gedit → numbered plain text, Word/WPS →
 Word rich text, and Notion/Obsidian → unchanged Markdown. Matching uses exact,
@@ -128,15 +147,16 @@ The platform-independent APIs live in `cleancopy-core`:
 
 Construct `engine::Engine::new(config, platform)` with an implementation of
 `Platform`; effects return the adapter's associated error type. Its `now` method
-supplies nondecreasing Unix milliseconds to `hotkey_pressed()` and `tick()`.
-Alternatively, feed explicitly timestamped `Event`s to `handle`; schedule timers
-using `next_deadline`. The same timebase must be used for persisted pause/history
-values. `MenuKey` events resolve numeric accelerators (1–5 by default), Enter for
-the initial default action, and Escape to cancel; native navigation can dispatch
-`MenuChoice` directly for the currently highlighted action.
-At identical timestamps, dispatch hotkeys before timers so the inclusive 400 ms
-double-press boundary is deterministic. Menu callbacks carry their menu ID;
-stale callbacks cannot execute a later menu's action.
+supplies nondecreasing Unix milliseconds to `hotkey_pressed()`,
+`full_menu_hotkey_pressed()`, and `tick()`. Alternatively, feed explicitly
+timestamped `Event`s to `handle`: `HotkeyPressed` dispatches smart paste and
+`FullMenuHotkeyPressed` opens the full menu. Schedule clipboard-restoration timers
+using `next_deadline`; neither shortcut schedules a double-press timeout. The same
+timebase must be used for persisted pause/history values. `MenuKey` events resolve
+numeric accelerators (1–5 by default), Enter for the initial default action, and
+Escape to cancel; native navigation can dispatch `MenuChoice` directly for the
+currently highlighted action. Menu callbacks carry their menu ID; stale callbacks
+cannot execute a later menu's action.
 
 The engine waits **150 ms** after paste dispatch before attempting clipboard
 restoration. Failed restoration retains the snapshot and schedules another

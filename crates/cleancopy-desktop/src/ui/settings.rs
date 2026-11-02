@@ -29,6 +29,14 @@ pub struct SettingsState {
     identifier_kind: usize,
     app_format: Format,
     dragging: Option<usize>,
+    recording: Option<HotkeyTarget>,
+    hotkey_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HotkeyTarget {
+    Paste,
+    FullMenu,
 }
 
 impl Default for SettingsState {
@@ -43,6 +51,8 @@ impl Default for SettingsState {
             identifier_kind: 0,
             app_format: Format::ChineseNumbered,
             dragging: None,
+            recording: None,
+            hotkey_error: None,
         }
     }
 }
@@ -50,7 +60,7 @@ impl Default for SettingsState {
 impl SettingsState {
     /// Returns true only for configuration edits, not preview or selection edits.
     pub fn show(&mut self, ctx: &egui::Context, config: &mut Config) -> bool {
-        let mut changed = false;
+        let mut changed = self.record_hotkey(ctx, config);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::WHITE))
             .show(ctx, |ui| {
@@ -112,6 +122,57 @@ impl SettingsState {
                 changed |= self.preview_ui(ui, right, config);
             });
         changed |= self.add_dialog(ctx, config);
+        changed
+    }
+
+    fn record_hotkey(&mut self, ctx: &egui::Context, config: &mut Config) -> bool {
+        let Some(target) = self.recording else {
+            return false;
+        };
+        let mut pressed = None;
+        ctx.input_mut(|input| {
+            input.events.retain(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } => {
+                    pressed.get_or_insert((*key, *modifiers));
+                    false
+                }
+                egui::Event::Key { .. } | egui::Event::Text(_) => false,
+                _ => true,
+            });
+        });
+        let Some((key, modifiers)) = pressed else {
+            return false;
+        };
+        if key == egui::Key::Escape && modifiers.is_none() {
+            self.recording = None;
+            self.hotkey_error = None;
+            return false;
+        }
+        let Some(shortcut) = recorded_hotkey(key, modifiers) else {
+            self.hotkey_error = Some(
+                "请使用 Ctrl、Alt 或 Super 修饰键（可加 Shift）加字母、数字、F1–F12 或导航键"
+                    .into(),
+            );
+            return false;
+        };
+        let (current, other) = match target {
+            HotkeyTarget::Paste => (&mut config.hotkey, &config.full_menu_hotkey),
+            HotkeyTarget::FullMenu => (&mut config.full_menu_hotkey, &config.hotkey),
+        };
+        if same_hotkey(&shortcut, other) {
+            self.hotkey_error = Some("两个快捷键不能相同，请选择不同的组合键".into());
+            return false;
+        }
+        let changed = *current != shortcut;
+        *current = shortcut;
+        self.recording = None;
+        self.hotkey_error = None;
         changed
     }
 
@@ -293,21 +354,33 @@ impl SettingsState {
             changed |= reorder(&mut config.secondary_items, from, to);
         }
         ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            section(ui, "唤出快捷键");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for key in hotkey_labels(&config.hotkey).into_iter().rev() {
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(250, 250, 251))
-                        .stroke(Stroke::new(1.0_f32, LINE))
-                        .corner_radius(4.0)
-                        .inner_margin(4.0)
-                        .show(ui, |ui| {
-                            ui.label(RichText::new(key).size(11.0).color(MUTED));
-                        });
+        section(ui, "快捷键（点击后按下新的组合键）");
+        for (target, label, hotkey) in [
+            (HotkeyTarget::Paste, "智能粘贴", &config.hotkey),
+            (
+                HotkeyTarget::FullMenu,
+                "完整粘贴菜单",
+                &config.full_menu_hotkey,
+            ),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                let recording = self.recording == Some(target);
+                let text = if recording {
+                    "请按组合键…（Esc 取消）".to_owned()
+                } else {
+                    hotkey_labels(hotkey).join(" + ")
+                };
+                if ui.button(text).clicked() {
+                    self.recording = Some(target);
+                    self.hotkey_error = None;
                 }
             });
-        });
+        }
+        if let Some(error) = &self.hotkey_error {
+            ui.colored_label(Color32::DARK_RED, error);
+        }
+        ui.label(RichText::new("首次使用：复制文本后按智能粘贴快捷键，按目标 App 规则粘贴；完整菜单快捷键始终直接打开菜单，不先粘贴。也可从托盘打开菜单。").size(11.0).color(MUTED));
         changed |= ui
             .checkbox(
                 &mut config.silent_mode,
@@ -456,13 +529,17 @@ impl SettingsState {
                 || config.app_rules != defaults.app_rules
                 || config.fallback != defaults.fallback
                 || config.secondary_items != defaults.secondary_items
-                || config.hotkey != defaults.hotkey;
+                || config.hotkey != defaults.hotkey
+                || config.full_menu_hotkey != defaults.full_menu_hotkey;
             config.silent_mode = defaults.silent_mode;
             config.numbering_style = defaults.numbering_style;
             config.app_rules = defaults.app_rules;
             config.fallback = defaults.fallback;
             config.secondary_items = defaults.secondary_items;
             config.hotkey = defaults.hotkey;
+            config.full_menu_hotkey = defaults.full_menu_hotkey;
+            self.recording = None;
+            self.hotkey_error = None;
             self.preview = Format::ChineseNumbered;
             self.selected_app = "TextEdit / Notepad / gedit".into();
         }
@@ -702,6 +779,76 @@ fn new_app_error<'a>(name: &str, identifier: &str, kind: usize, count: usize) ->
     }
     None
 }
+fn recorded_hotkey(key: egui::Key, modifiers: egui::Modifiers) -> Option<String> {
+    let name = format!("{key:?}");
+    let key = if let Some(digit) = name.strip_prefix("Num") {
+        digit.to_owned()
+    } else if (name.len() == 1 && name.as_bytes()[0].is_ascii_uppercase())
+        || matches!(
+            key,
+            egui::Key::Escape
+                | egui::Key::Enter
+                | egui::Key::Space
+                | egui::Key::Tab
+                | egui::Key::Backspace
+                | egui::Key::Delete
+                | egui::Key::Insert
+                | egui::Key::Home
+                | egui::Key::End
+                | egui::Key::PageUp
+                | egui::Key::PageDown
+                | egui::Key::ArrowUp
+                | egui::Key::ArrowDown
+                | egui::Key::ArrowLeft
+                | egui::Key::ArrowRight
+        )
+        || name
+            .strip_prefix('F')
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| (1..=12).contains(&n))
+    {
+        name
+    } else {
+        return None;
+    };
+    let mut parts = Vec::new();
+    if modifiers.ctrl {
+        parts.push("Ctrl");
+    }
+    if modifiers.alt {
+        parts.push("Alt");
+    }
+    if modifiers.shift {
+        parts.push("Shift");
+    }
+    // egui's `command` also mirrors Ctrl on non-macOS; only mac_cmd is Super.
+    if modifiers.mac_cmd {
+        parts.push("Super");
+    }
+    if !(modifiers.ctrl || modifiers.alt || modifiers.mac_cmd) {
+        return None;
+    }
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
+fn same_hotkey(left: &str, right: &str) -> bool {
+    let canonical = |value: &str| {
+        let mut parts: Vec<_> = value
+            .split('+')
+            .map(|part| match part.trim().to_ascii_lowercase().as_str() {
+                "control" => "ctrl".to_owned(),
+                "cmd" | "command" => "super".to_owned(),
+                "option" => "alt".to_owned(),
+                other => other.to_owned(),
+            })
+            .collect();
+        parts.sort();
+        parts
+    };
+    canonical(left) == canonical(right)
+}
+
 fn hotkey_labels(hotkey: &str) -> Vec<String> {
     hotkey
         .split('+')
@@ -952,6 +1099,126 @@ fn decode_entities(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn record(
+        state: &mut SettingsState,
+        config: &mut Config,
+        key: egui::Key,
+        modifiers: egui::Modifiers,
+    ) -> bool {
+        let ctx = egui::Context::default();
+        let mut changed = false;
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                ..Default::default()
+            },
+            |ctx| changed = state.record_hotkey(ctx, config),
+        );
+        changed
+    }
+
+    #[test]
+    fn separate_recorders_only_edit_the_selected_hotkey() {
+        let mut config = Config::default();
+        let old_menu = config.full_menu_hotkey.clone();
+        let mut state = SettingsState {
+            recording: Some(HotkeyTarget::Paste),
+            ..Default::default()
+        };
+        assert!(record(
+            &mut state,
+            &mut config,
+            egui::Key::P,
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+        ));
+        assert_eq!(config.hotkey, "Ctrl+Shift+P");
+        assert_eq!(config.full_menu_hotkey, old_menu);
+        assert_eq!(state.recording, None);
+        state.recording = Some(HotkeyTarget::FullMenu);
+        assert!(record(
+            &mut state,
+            &mut config,
+            egui::Key::M,
+            egui::Modifiers::CTRL | egui::Modifiers::ALT
+        ));
+        assert_eq!(config.hotkey, "Ctrl+Shift+P");
+        assert_eq!(config.full_menu_hotkey, "Ctrl+Alt+M");
+    }
+
+    #[test]
+    fn recorder_rejects_duplicates_and_unmodified_keys_and_escape_cancels() {
+        let mut config = Config {
+            hotkey: "Shift+Control+P".into(),
+            ..Default::default()
+        };
+        let original = config.full_menu_hotkey.clone();
+        let mut state = SettingsState {
+            recording: Some(HotkeyTarget::FullMenu),
+            ..Default::default()
+        };
+        assert!(!record(
+            &mut state,
+            &mut config,
+            egui::Key::P,
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+        ));
+        assert!(state.hotkey_error.is_some());
+        assert!(!record(
+            &mut state,
+            &mut config,
+            egui::Key::V,
+            egui::Modifiers::NONE
+        ));
+        assert!(state.recording.is_some());
+        assert!(!record(
+            &mut state,
+            &mut config,
+            egui::Key::Escape,
+            egui::Modifiers::NONE
+        ));
+        assert_eq!(config.full_menu_hotkey, original);
+        assert_eq!(state.recording, None);
+        assert_eq!(state.hotkey_error, None);
+    }
+
+    #[test]
+    fn recorded_syntax_matches_native_parser_and_mac_modifiers() {
+        assert_eq!(
+            recorded_hotkey(
+                egui::Key::V,
+                egui::Modifiers::MAC_CMD | egui::Modifiers::ALT
+            )
+            .as_deref(),
+            Some("Alt+Super+V")
+        );
+        assert_eq!(
+            recorded_hotkey(egui::Key::Num7, egui::Modifiers::CTRL).as_deref(),
+            Some("Ctrl+7")
+        );
+        assert_eq!(
+            recorded_hotkey(egui::Key::F12, egui::Modifiers::CTRL).as_deref(),
+            Some("Ctrl+F12")
+        );
+        assert_eq!(
+            recorded_hotkey(egui::Key::ArrowDown, egui::Modifiers::ALT).as_deref(),
+            Some("Alt+ArrowDown")
+        );
+        assert_eq!(recorded_hotkey(egui::Key::F13, egui::Modifiers::CTRL), None);
+        assert_eq!(
+            recorded_hotkey(egui::Key::Plus, egui::Modifiers::CTRL),
+            None
+        );
+        assert_eq!(recorded_hotkey(egui::Key::V, egui::Modifiers::SHIFT), None);
+        assert!(same_hotkey("Super+Alt+V", "Option+Cmd+V"));
+    }
+
     #[test]
     fn groups_preserve_aliases_and_edit_every_rule() {
         let mut config = Config::default();

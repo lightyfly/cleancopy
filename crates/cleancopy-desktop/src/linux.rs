@@ -41,7 +41,7 @@ pub struct LinuxPlatform {
     root: Window,
     clipboard: NativeClipboard,
     keys: Vec<(u8, Vec<u32>)>,
-    hotkeys: Vec<u8>,
+    hotkeys: Vec<(u8, u16, bool)>,
     locks: Vec<u16>,
     menu_keys: Vec<u8>,
     menu: Option<MenuModel>,
@@ -52,8 +52,11 @@ pub struct LinuxPlatform {
     pub notice: Option<String>,
 }
 impl LinuxPlatform {
-    /// Connect to DISPLAY and reserve Ctrl+Shift+V, failing on checked BadAccess.
+    /// Connect to DISPLAY and reserve both default shortcuts.
     pub fn new() -> Result<Self> {
+        Self::with_config(&Config::default())
+    }
+    pub fn with_config(config: &Config) -> Result<Self> {
         let (conn, screen) = x11rb::connect(None).map_err(err)?;
         let root = conn.setup().roots[screen].root;
         conn.xtest_get_version(2, 2)
@@ -94,14 +97,7 @@ impl LinuxPlatform {
             }
         }
         let locks = lock_variants(&lock_masks);
-        let hotkeys: Vec<_> = keys
-            .iter()
-            .filter(|(_, s)| s.contains(&0x76) || s.contains(&0x56))
-            .map(|(k, _)| *k)
-            .collect();
-        if hotkeys.is_empty() {
-            return Err(err("keyboard map has no V key"));
-        }
+        let hotkeys = configured_hotkeys(config, &keys)?;
         let clipboard = NativeClipboard::new().map_err(err)?;
         let result = Self {
             conn,
@@ -118,14 +114,18 @@ impl LinuxPlatform {
             started: Instant::now(),
             notice: None,
         };
-        for &key in &result.hotkeys {
-            for &locks in &result.locks {
-                result
-                    .conn
+        result.grab_hotkeys(&result.hotkeys)?;
+        result.conn.flush().map_err(err)?;
+        Ok(result)
+    }
+    fn grab_hotkeys(&self, hotkeys: &[(u8, u16, bool)]) -> Result<()> {
+        for &(key, modifiers, full) in hotkeys {
+            for &locks in &self.locks {
+                self.conn
                     .grab_key(
                         false,
-                        root,
-                        ModMask::from(u16::from(ModMask::CONTROL | ModMask::SHIFT) | locks),
+                        self.root,
+                        ModMask::from(modifiers | locks),
                         key,
                         GrabMode::ASYNC,
                         GrabMode::ASYNC,
@@ -134,13 +134,47 @@ impl LinuxPlatform {
                     .check()
                     .map_err(|e| {
                         err(format!(
-                            "cannot register Ctrl+Shift+V (global hotkey conflict/BadAccess): {e}"
+                            "cannot register {} hotkey (global hotkey conflict/BadAccess): {e}",
+                            if full { "full-menu" } else { "paste" }
                         ))
                     })?;
             }
         }
-        result.conn.flush().map_err(err)?;
-        Ok(result)
+        Ok(())
+    }
+    /// Register new shortcuts before releasing old ones, retaining working grabs on failure.
+    pub fn update_hotkeys(&mut self, config: &Config) -> Result<()> {
+        let new = configured_hotkeys(config, &self.keys)?;
+        let added: Vec<_> = new
+            .iter()
+            .copied()
+            .filter(|(key, mask, _)| !self.hotkeys.iter().any(|(k, m, _)| k == key && m == mask))
+            .collect();
+        if let Err(error) = self.grab_hotkeys(&added) {
+            self.ungrab_hotkeys(&added)?;
+            return Err(error);
+        }
+        let removed: Vec<_> = self
+            .hotkeys
+            .iter()
+            .copied()
+            .filter(|(key, mask, _)| !new.iter().any(|(k, m, _)| k == key && m == mask))
+            .collect();
+        self.ungrab_hotkeys(&removed)?;
+        self.hotkeys = new;
+        self.conn.flush().map_err(err)
+    }
+    fn ungrab_hotkeys(&self, hotkeys: &[(u8, u16, bool)]) -> Result<()> {
+        for &(key, modifiers, _) in hotkeys {
+            for &locks in &self.locks {
+                self.conn
+                    .ungrab_key(key, self.root, ModMask::from(modifiers | locks))
+                    .map_err(err)?
+                    .check()
+                    .map_err(err)?;
+            }
+        }
+        Ok(())
     }
     pub fn menu(&self) -> Option<&MenuModel> {
         self.menu.as_ref()
@@ -191,11 +225,18 @@ impl LinuxPlatform {
         let mut events = Vec::new();
         while let Some(event) = self.conn.poll_for_event().map_err(err)? {
             if let XEvent::KeyPress(key) = event {
-                if self.hotkeys.contains(&key.detail)
-                    && u16::from(key.state) & u16::from(ModMask::CONTROL | ModMask::SHIFT)
-                        == u16::from(ModMask::CONTROL | ModMask::SHIFT)
+                let locks = self.locks.iter().fold(0, |mask, lock| mask | lock);
+                let modifiers = u16::from(key.state) & 0xff & !locks;
+                if let Some(&(_, _, full)) = self
+                    .hotkeys
+                    .iter()
+                    .find(|&&(code, mask, _)| code == key.detail && modifiers == mask)
                 {
-                    events.push(Event::HotkeyPressed { t: self.now() });
+                    events.push(if full {
+                        Event::FullMenuHotkeyPressed { t: self.now() }
+                    } else {
+                        Event::HotkeyPressed { t: self.now() }
+                    });
                 } else if let Some(menu) = &self.menu {
                     let symbols = self
                         .keys
@@ -262,16 +303,14 @@ impl LinuxPlatform {
             .map_err(err)?
             .keys;
         let held = |key: u8| map[usize::from(key / 8)] & (1 << (key % 8)) != 0;
-        let shifts: Vec<_> = self
+        let modifiers: Vec<_> = self
             .keys
             .iter()
-            .filter(|(k, s)| held(*k) && (s.contains(&0xffe1) || s.contains(&0xffe2)))
-            .map(|(k, _)| *k)
-            .collect();
-        let controls: Vec<_> = self
-            .keys
-            .iter()
-            .filter(|(k, s)| held(*k) && (s.contains(&0xffe3) || s.contains(&0xffe4)))
+            .filter(|(k, s)| {
+                held(*k)
+                    && s.iter()
+                        .any(|symbol| matches!(*symbol, 0xffe1..=0xffe4 | 0xffe7..=0xffee))
+            })
             .map(|(k, _)| *k)
             .collect();
         let control = self.key(0xffe3)?;
@@ -283,13 +322,10 @@ impl LinuxPlatform {
                 .check()
                 .map_err(err)
         };
-        // Do not restore Shift: restoring a physically released modifier would leave
-        // the server with a stuck Shift. Real future key events establish its state.
-        for shift in shifts {
-            fake(xproto::KEY_RELEASE_EVENT, shift)?;
-        }
-        for ctrl in &controls {
-            fake(xproto::KEY_RELEASE_EVENT, *ctrl)?;
+        // Never restore synthetic modifier releases: a physical release may already
+        // be queued, and restoring it could leave a stuck modifier on the server.
+        for modifier in modifiers {
+            fake(xproto::KEY_RELEASE_EVENT, modifier)?;
         }
         if held(key) {
             fake(xproto::KEY_RELEASE_EVENT, key)?;
@@ -421,8 +457,9 @@ pub struct LinuxDriver {
 }
 impl LinuxDriver {
     pub fn new(config: Config) -> Result<Self> {
+        let platform = LinuxPlatform::with_config(&config)?;
         Ok(Self {
-            engine: Engine::new(config, LinuxPlatform::new()?),
+            engine: Engine::new(config, platform),
         })
     }
     pub fn engine(&self) -> &Engine<LinuxPlatform> {
@@ -447,6 +484,70 @@ impl LinuxDriver {
         }
         Ok(())
     }
+}
+fn configured_hotkeys(config: &Config, keys: &[(u8, Vec<u32>)]) -> Result<Vec<(u8, u16, bool)>> {
+    let mut result = Vec::new();
+    for (text, full) in [(&config.hotkey, false), (&config.full_menu_hotkey, true)] {
+        let (symbol, modifiers) = parse_hotkey(text)?;
+        for (code, _) in keys.iter().filter(|(_, symbols)| symbols.contains(&symbol)) {
+            if result
+                .iter()
+                .any(|&(key, mask, _)| key == *code && mask == modifiers)
+            {
+                return Err(err("paste and full-menu hotkeys must be different"));
+            }
+            result.push((*code, modifiers, full));
+        }
+        if !result.iter().any(|&(_, _, is_full)| is_full == full) {
+            return Err(err(format!("keyboard map cannot register {text}")));
+        }
+    }
+    Ok(result)
+}
+fn parse_hotkey(text: &str) -> Result<(u32, u16)> {
+    let mut parts: Vec<_> = text.split('+').map(str::trim).collect();
+    let key = parts.pop().unwrap_or_default();
+    let mut modifiers = 0;
+    for part in parts {
+        modifiers |= u16::from(match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => ModMask::CONTROL,
+            "shift" => ModMask::SHIFT,
+            "alt" | "option" => ModMask::M1,
+            "super" | "cmd" | "command" => ModMask::M4,
+            _ => return Err(err(format!("unsupported hotkey modifier: {part}"))),
+        });
+    }
+    if modifiers & u16::from(ModMask::CONTROL | ModMask::M1 | ModMask::M4) == 0 {
+        return Err(err("hotkey requires Ctrl, Alt or Super"));
+    }
+    let lower = key.to_ascii_lowercase();
+    let symbol = match lower.as_str() {
+        "escape" => 0xff1b,
+        "enter" => 0xff0d,
+        "space" => 0x20,
+        "tab" => 0xff09,
+        "backspace" => 0xff08,
+        "delete" => 0xffff,
+        "insert" => 0xff63,
+        "home" => 0xff50,
+        "end" => 0xff57,
+        "pageup" => 0xff55,
+        "pagedown" => 0xff56,
+        "arrowleft" | "left" => 0xff51,
+        "arrowup" | "up" => 0xff52,
+        "arrowright" | "right" => 0xff53,
+        "arrowdown" | "down" => 0xff54,
+        _ if lower.len() == 1 && lower.as_bytes()[0].is_ascii_alphanumeric() => {
+            u32::from(lower.as_bytes()[0])
+        }
+        _ => lower
+            .strip_prefix('f')
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|n| (1..=12).contains(n))
+            .map(|n| 0xffbd + n)
+            .ok_or_else(|| err(format!("unsupported hotkey key: {key}")))?,
+    };
+    Ok((symbol, modifiers))
 }
 fn unix_ms() -> u64 {
     SystemTime::now()
@@ -638,15 +739,18 @@ impl ksni::Tray for NativeTray {
         }
         items.push(ksni::MenuItem::Separator);
         for (label, action) in [
-            ("唤出粘贴菜单", TrayAction::ShowMenu),
-            ("撤销上次转换", TrayAction::Undo),
-            ("暂停 1 小时", TrayAction::Pause),
-            ("设置…", TrayAction::Settings),
-            ("退出 CleanCopy", TrayAction::Quit),
+            (
+                format!("唤出粘贴菜单 ({})", self.config.full_menu_hotkey),
+                TrayAction::ShowMenu,
+            ),
+            ("撤销上次转换".into(), TrayAction::Undo),
+            ("暂停 1 小时".into(), TrayAction::Pause),
+            ("设置…".into(), TrayAction::Settings),
+            ("退出 CleanCopy".into(), TrayAction::Quit),
         ] {
             items.push(
                 StandardItem {
-                    label: label.into(),
+                    label,
                     activate: Box::new(move |tray: &mut Self| tray.send(action)),
                     ..Default::default()
                 }
@@ -764,8 +868,7 @@ impl LinuxApp {
                 self.driver.dispatch(Event::Resume { t })?;
                 self.enabled = true;
                 self.driver.dispatch(Event::Cancel { t })?;
-                self.driver.dispatch(Event::HotkeyPressed { t })?;
-                self.driver.dispatch(Event::HotkeyPressed { t })?;
+                self.driver.dispatch(Event::FullMenuHotkeyPressed { t })?;
             }
             TrayAction::Undo => self.driver.dispatch(Event::Undo { t })?,
             TrayAction::SetEnabled(enabled) => {
@@ -891,7 +994,14 @@ impl eframe::App for LinuxApp {
                     Ok(config) => {
                         let changed = toml::to_string(&config).ok()
                             != toml::to_string(self.driver.engine.config()).ok();
-                        if !changed || self.driver.engine.update_config(config.clone()).is_ok() {
+                        let applied = !changed
+                            || (|| -> Result<()> {
+                                self.driver.engine.platform_mut().update_hotkeys(&config)?;
+                                self.driver.engine.update_config(config.clone())
+                            })()
+                            .map_err(|error| eprintln!("CleanCopy settings: {error}"))
+                            .is_ok();
+                        if applied {
                             self.saved = config;
                         }
                     }
@@ -932,6 +1042,26 @@ impl eframe::App for LinuxApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parses_independent_shortcuts_and_recorder_keys() {
+        assert_eq!(parse_hotkey("Ctrl+Shift+V").unwrap(), (0x76, 5));
+        assert_eq!(parse_hotkey("Ctrl+Alt+V").unwrap(), (0x76, 12));
+        assert_eq!(parse_hotkey("Cmd+Option+F12").unwrap(), (0xffc9, 72));
+        assert_eq!(parse_hotkey("Alt+ArrowLeft").unwrap(), (0xff51, 8));
+        for invalid in ["V", "Shift+V", "Ctrl+F13", "Ctrl+", "Hyper+V"] {
+            assert!(parse_hotkey(invalid).is_err(), "{invalid}");
+        }
+        let keys = vec![(55, vec![0x76, 0x56])];
+        assert_eq!(
+            configured_hotkeys(&Config::default(), &keys).unwrap().len(),
+            2
+        );
+        let duplicate = Config {
+            full_menu_hotkey: "Shift+Ctrl+v".into(),
+            ..Config::default()
+        };
+        assert!(configured_hotkeys(&duplicate, &keys).is_err());
+    }
     #[test]
     fn modifier_powerset_deduplicates() {
         assert_eq!(lock_variants(&[2, 16, 2]), vec![0, 2, 16, 18]);

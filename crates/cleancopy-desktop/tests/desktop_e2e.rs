@@ -65,7 +65,7 @@ impl Harness {
         out.stdout
     }
     fn key(&self, keys: &[&str]) {
-        let mut args = vec!["key", "--clearmodifiers"];
+        let mut args = vec!["key", "--clearmodifiers", "--delay", "0"];
         args.extend(keys);
         self.xdo(&args);
     }
@@ -94,19 +94,16 @@ impl Harness {
             .unwrap()
             .data
     }
-    fn open(&self, double: bool, secondary: bool, shot: &str) -> u32 {
+    fn open(&self, full_hotkey: bool, secondary: bool, shot: &str) -> u32 {
+        assert!(self.menu().is_none(), "timing requires a hidden menu");
         self.xdo(&["mousemove", "350", "200"]);
         let start = Instant::now();
-        self.key(if double {
-            &["ctrl+shift+v", "ctrl+shift+v"]
+        self.key(if full_hotkey {
+            &["ctrl+alt+v"]
         } else {
             &["ctrl+shift+v"]
         });
         wait("menu mapped", || self.menu().is_some());
-        println!(
-            "MEASURE hotkey→menu-visible {shot}: {:.2} ms",
-            start.elapsed().as_secs_f64() * 1000.0
-        );
         let id = self.menu().unwrap();
         // Real rendered contents: format-panel interior is white only when expanded.
         wait("menu painted with expected contents", || {
@@ -117,6 +114,24 @@ impl Harness {
                 p[..3] == [242, 237, 237]
             }
         });
+        let elapsed = start.elapsed();
+        let route = if full_hotkey {
+            "Ctrl+Alt+V→full-menu-visible"
+        } else if secondary {
+            "unknown-app→secondary-visible"
+        } else {
+            "Ctrl+Shift+V→full-menu-visible"
+        };
+        println!(
+            "MEASURE {route} {shot}: {:.2} ms (native mapped window + expected painted panel)",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        if secondary {
+            assert!(
+                elapsed <= Duration::from_millis(100),
+                "unknown-app→secondary-visible exceeded 100 ms: {elapsed:?}"
+            );
+        }
         self.shot(shot);
         id
     }
@@ -365,7 +380,7 @@ fn desktop_runtime_matrix() {
     h.open(true, false, "full");
     h.close();
     h.restored(&before);
-    println!("PASS (e) double press full menu (format panel collapsed)");
+    println!("PASS (e) native Ctrl+Alt+V full menu (format panel collapsed)");
     // Undo is selected with the actual mouse, then observed as Ctrl+Z + original Ctrl+V.
     let id = h.open(true, false, "undo");
     h.xdo(&[
@@ -407,7 +422,15 @@ fn desktop_runtime_matrix() {
     let start = Instant::now();
     h.key(&["ctrl+shift+v"]);
     let output = h.paste(&gedit, 2);
-    println!("MEASURE 10k-char hotkey→convert+native-paste: {:.2} ms (includes single-press arbitration)",start.elapsed().as_secs_f64()*1000.0);
+    let elapsed = start.elapsed();
+    println!(
+        "MEASURE 10k-char hotkey→convert+native-paste: {:.2} ms (native target received clipboard bytes)",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    assert!(
+        elapsed <= Duration::from_millis(300),
+        "10k convert+native paste exceeded 300 ms: {elapsed:?}"
+    );
     assert_eq!(
         output,
         format!("一、Heading\n\n{}", "x".repeat(9987)).as_bytes()

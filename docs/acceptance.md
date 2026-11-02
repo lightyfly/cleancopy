@@ -287,3 +287,34 @@ refreshed and inspected (only `e2e-background-progress.png` changed in bytes).
   `bullets_are_real_list_markers_not_inline_glyphs`. Verified on output only; Symbol-font marker
   rendering in WPS (v5 M-3) not re-checked.
 - Gates: 253 pass / 0 fail / 7 ignored, clippy ok, fmt ok. e2e (`--update-screenshots`): 1 passed.
+
+## v7 (report-v7)
+
+- **D-A (WPS got raw Markdown for 2–5 MB):** confirmed in code. `finish_paste` armed the restore at
+  paste + `RESTORE_DELAY_MS` (150 ms) and `Timer` restored unconditionally at that deadline, whether
+  or not the target had requested the data yet; a reader that starts later than 150 ms gets the
+  original. Fix: `Platform::restore_ready(elapsed, bytes)`, asked from 150 ms every 20 ms.
+  X11: wait until ≥1 data SelectionRequest has been answered, no INCR transfer is active and the
+  owner has been quiet 100 ms; stop at 5 s; stop at once on SelectionClear (newer copy → restore
+  skipped by the fingerprint check). Other platforms: 150 ms + 400 ms/MB, max 3 s.
+  Tests: `restore_wait_grows_with_size_and_is_capped`, `x11_restore_waits_for_completed_reads`.
+- **Slow-reader verification** (`/tmp/slowwps`, WM_CLASS wps, Xvfb :93 + xfwm4, silent mode, starts
+  reading 400 ms after Ctrl+V, TARGETS then UTF8_STRING after 200 ms, 20 ms sleep per INCR chunk),
+  release builds, 2 rounds each:
+
+  | input | 91b95a0 | this fix | read done / restored (ms after Ctrl+V) |
+  |---|---|---|---|
+  | 3 KB | original 2/2 | converted 2/2 | 603 / 723–725 |
+  | 2m-exact (rich) | original 2/2 | converted 2/2 | 823 / 1120–1128 |
+  | 3m | original 2/2 | converted 2/2 | 909–913 / 1048–1053 |
+  | 5m | original 2/2 | converted 2/2 | 1059–1074 / 1217–1248 |
+
+  Fast reader, 3 KB, 5 rounds (Ctrl+V → restore): before 142–145 ms, after 139–145 ms (no slowdown).
+  Never-reading target: restored at 5,081 ms. Newer copy 1.3 s after paste: kept, restore skipped.
+  The clipboard is restored after every paste. Limitation: any reader (e.g. a clipboard manager)
+  counts as a completed request. **Real WPS not tested** (no isolated WPS available).
+- **D-B:** a note replaces the shortcut hint and is right-aligned in grey at measured width; the
+  main label "Word / WPS 富文本" is elided with "…" first if space is short. Screenshot (3 MB):
+  `docs/screenshots/menu-word-over-2mb-note.png`.
+- Gates: 255 pass / 0 fail / 7 ignored, clippy ok, fmt ok. e2e `--update-screenshots`: 1 passed
+  (45.5 s vs 17 s in v6: e2e targets that never read the clipboard now wait for the 5 s timeout).

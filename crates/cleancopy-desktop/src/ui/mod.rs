@@ -2,6 +2,8 @@
 pub mod backdrop;
 pub mod fonts;
 pub mod menus;
+pub mod onboarding;
+pub mod palette;
 pub mod settings;
 
 use crate::{
@@ -17,6 +19,7 @@ pub enum View {
     MenuSecondary,
     Settings,
     Tray,
+    Onboarding,
 }
 
 /// In-memory effects deliberately cannot touch the OS clipboard or inject input.
@@ -72,6 +75,7 @@ pub struct DesktopApp {
     view: View,
     engine: Engine<DemoPlatform>,
     settings: settings::SettingsState,
+    onboarding: onboarding::OnboardingState,
     menu: menus::MenuState,
     save_path: Option<PathBuf>,
     error: Option<String>,
@@ -113,6 +117,7 @@ impl DesktopApp {
                 },
             ),
             settings: Default::default(),
+            onboarding: Default::default(),
             menu: Default::default(),
             save_path,
             error: None,
@@ -120,7 +125,7 @@ impl DesktopApp {
             started: Instant::now(),
             epoch,
         };
-        if view != View::Settings {
+        if !matches!(view, View::Settings | View::Onboarding) {
             app.sync_pause(epoch);
         }
         if matches!(view, View::Menu | View::MenuSecondary) {
@@ -179,6 +184,11 @@ impl DesktopApp {
                 self.view = View::Settings;
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(settings::DEFAULT_SIZE));
             }
+            menus::TrayAction::Onboarding => {
+                self.view = View::Onboarding;
+                self.onboarding = Default::default();
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(onboarding::SIZE));
+            }
             menus::TrayAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
         ctx.request_repaint();
@@ -202,7 +212,7 @@ impl eframe::App for DesktopApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let now = self.now();
         self.engine.platform_mut().now = now;
-        if self.view != View::Settings {
+        if !matches!(self.view, View::Settings | View::Onboarding) {
             self.sync_pause(now);
         }
         if let Some(until) = self.engine.config().paused_until {
@@ -237,6 +247,29 @@ impl eframe::App for DesktopApp {
                         }
                     }
                     self.engine.update_config(config).unwrap();
+                }
+            }
+            View::Onboarding => {
+                if let Some(path) = &self.save_path {
+                    match Config::load(path) {
+                        Ok(config) => self.engine.update_config(config).unwrap(),
+                        Err(error) => self.error = Some(error.to_string()),
+                    }
+                }
+                let previous = self.engine.config().clone();
+                let mut config = previous.clone();
+                let (changed, outcome) = self.onboarding.show(ctx, &mut config);
+                if changed {
+                    if let Some(path) = &self.save_path {
+                        match config.save_changes(path, &previous) {
+                            Ok(merged) => config = merged,
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
+                    }
+                    self.engine.update_config(config).unwrap();
+                }
+                if outcome == onboarding::Outcome::Finished && self.error.is_none() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
             View::Menu | View::MenuSecondary => {
@@ -326,6 +359,7 @@ mod tests {
     fn app(config: Config) -> DesktopApp {
         DesktopApp {
             view: View::Tray,
+            onboarding: Default::default(),
             enabled: config.paused_until.is_none_or(|until| until <= 1_000),
             engine: Engine::new(
                 config,

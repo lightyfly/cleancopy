@@ -8,10 +8,10 @@ use crate::{
 };
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 
-const ACCENT: Color32 = Color32::from_rgb(91, 91, 214);
-const TEXT: Color32 = Color32::from_rgb(29, 29, 31);
-const SUB: Color32 = Color32::from_rgb(110, 110, 115);
-const MUTED: Color32 = Color32::from_rgb(161, 161, 166);
+const ACCENT: Color32 = super::palette::ACCENT;
+const TEXT: Color32 = super::palette::TEXT;
+const SUB: Color32 = super::palette::SUB;
+const MUTED: Color32 = super::palette::MUTED;
 const LINE: Color32 = Color32::from_rgb(230, 230, 234);
 const ROW: f32 = 30.0;
 const TIME: u64 = 1000;
@@ -415,6 +415,7 @@ pub enum TrayAction {
     SetEnabled(bool),
     Pause,
     Settings,
+    Onboarding,
     Quit,
 }
 
@@ -567,6 +568,7 @@ pub fn tray(ctx: &egui::Context, config: &Config, enabled: &mut bool) -> Option<
                 ("↺", "撤销上次转换", "", TrayAction::Undo),
                 ("‖", "暂停 1 小时", "", TrayAction::Pause),
                 ("⚙", "设置…", "", TrayAction::Settings),
+                ("?", "使用引导…", "", TrayAction::Onboarding),
                 ("", "退出 CleanCopy", "", TrayAction::Quit),
             ]
             .into_iter()

@@ -95,6 +95,8 @@ pub struct Config {
     pub paused_until: Option<u64>,
     /// Newest first, capped at two entries when loaded, saved, or recorded.
     pub recent_pastes: Vec<RecentPaste>,
+    /// Set once the first-run onboarding is finished or skipped.
+    pub onboarding_done: bool,
 }
 
 impl Default for Config {
@@ -119,6 +121,7 @@ impl Default for Config {
             .into(),
             paused_until: None,
             recent_pastes: Vec::new(),
+            onboarding_done: false,
         }
     }
 }
@@ -281,7 +284,8 @@ impl Config {
             hotkey,
             full_menu_hotkey,
             paused_until,
-            recent_pastes
+            recent_pastes,
+            onboarding_done
         );
         if toml::to_string(&merged).map_err(ConfigError::Encode)? != original {
             merged.save(path)?;

@@ -14,6 +14,9 @@ struct Args {
     /// Open settings instead of running the Linux background helper.
     #[arg(long, conflicts_with = "preview")]
     settings: bool,
+    /// Open the first-run onboarding card (also offered from the tray).
+    #[arg(long, conflicts_with_all = ["preview", "settings"])]
+    onboarding: bool,
     /// Override the settings file for the daemon or settings window.
     #[arg(long)]
     config: Option<std::path::PathBuf>,
@@ -24,12 +27,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(all(unix, not(target_os = "macos")))]
     std::env::set_var("WINIT_UNIX_BACKEND", "x11");
     #[cfg(target_os = "linux")]
-    if args.preview.is_none() && !args.settings {
+    if args.preview.is_none() && !args.settings && !args.onboarding {
         let path = args.config.map(Ok).unwrap_or_else(config_path)?;
         cleancopy_desktop::linux::run(Config::load(&path)?, Some(path))?;
         return Ok(());
     }
-    let view = args.preview.unwrap_or(View::Settings);
+    let view = args.preview.unwrap_or(if args.onboarding {
+        View::Onboarding
+    } else {
+        View::Settings
+    });
     let (config, path) = if args.preview.is_some() {
         (demo_config(), None)
     } else {
@@ -40,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         View::Settings => cleancopy_desktop::ui::settings::DEFAULT_SIZE,
         View::Menu | View::MenuSecondary => egui::vec2(960.0, 600.0),
         View::Tray => egui::vec2(720.0, 520.0),
+        View::Onboarding => cleancopy_desktop::ui::onboarding::SIZE,
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

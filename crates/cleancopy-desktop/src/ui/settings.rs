@@ -5,11 +5,11 @@ use cleancopy_core::{
 };
 use eframe::egui::{self, Color32, FontId, RichText, Stroke, Vec2};
 
-const ACCENT: Color32 = Color32::from_rgb(91, 91, 214);
+const ACCENT: Color32 = super::palette::ACCENT;
 const LINE: Color32 = Color32::from_rgb(230, 230, 234);
-const SUB: Color32 = Color32::from_rgb(110, 110, 115);
-const MUTED: Color32 = Color32::from_rgb(161, 161, 166);
-const TEXT: Color32 = Color32::from_rgb(29, 29, 31);
+const SUB: Color32 = super::palette::SUB;
+const MUTED: Color32 = super::palette::MUTED;
+const TEXT: Color32 = super::palette::TEXT;
 const SAMPLE: &str = "# 项目周报\n## 本周进展\n- 完成 **剪贴板监听**\n- 接入 Word 富文本\n  - 标题映射 标题1/2\n  - 表格与代码块\n## 下周计划\n1. Windows 托盘\n2. 识别失败兜底";
 const FORMATS: [Format; 5] = [
     Format::ChineseNumbered,
@@ -615,7 +615,7 @@ const SEG_TRACK: Color32 = Color32::from_rgb(240, 240, 243);
 
 /// macOS-style segmented control: light gray track, white sliding thumb
 /// with a soft shadow, no accent fill.
-fn segmented<T: Copy + PartialEq>(
+pub(super) fn segmented<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     id: &str,
     options: &[(T, &str)],
@@ -677,7 +677,7 @@ fn segmented<T: Copy + PartialEq>(
 }
 
 /// Checkbox matching the mockup `.cb`: 15px, radius 4, accent fill + white tick.
-fn check(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+pub(super) fn check(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
     let (rect, mut response) = ui.allocate_exact_size(Vec2::splat(15.0), egui::Sense::click());
     if response.clicked() {
         *value = !*value;
@@ -980,7 +980,7 @@ fn new_app_error<'a>(name: &str, identifier: &str, kind: usize, count: usize) ->
     }
     None
 }
-fn recorded_hotkey(key: egui::Key, modifiers: egui::Modifiers) -> Option<String> {
+pub(super) fn recorded_hotkey(key: egui::Key, modifiers: egui::Modifiers) -> Option<String> {
     let name = format!("{key:?}");
     let key = if let Some(digit) = name.strip_prefix("Num") {
         digit.to_owned()
@@ -1033,7 +1033,7 @@ fn recorded_hotkey(key: egui::Key, modifiers: egui::Modifiers) -> Option<String>
     Some(parts.join("+"))
 }
 
-fn same_hotkey(left: &str, right: &str) -> bool {
+pub(super) fn same_hotkey(left: &str, right: &str) -> bool {
     let canonical = |value: &str| {
         let mut parts: Vec<_> = value
             .split('+')
@@ -1050,7 +1050,7 @@ fn same_hotkey(left: &str, right: &str) -> bool {
     canonical(left) == canonical(right)
 }
 
-fn hotkey_labels(hotkey: &str) -> Vec<String> {
+pub(super) fn hotkey_labels(hotkey: &str) -> Vec<String> {
     hotkey
         .split('+')
         .map(|key| match key.trim() {

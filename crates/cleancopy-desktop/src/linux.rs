@@ -814,6 +814,7 @@ impl ksni::Tray for NativeTray {
             ("撤销上次转换".into(), TrayAction::Undo),
             ("暂停 1 小时".into(), TrayAction::Pause),
             ("设置…".into(), TrayAction::Settings),
+            ("使用引导…".into(), TrayAction::Onboarding),
             ("退出 CleanCopy".into(), TrayAction::Quit),
         ] {
             items.push(
@@ -893,7 +894,7 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 &[1, 0, 0, 0, 0, 0, 0, 0, 0],
             )?
             .check()?;
-            Ok(Box::new(LinuxApp {
+            let mut app = LinuxApp {
                 driver,
                 tray,
                 actions,
@@ -907,10 +908,35 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 saved,
                 frames: 0,
                 last_sync: Instant::now(),
-            }))
+            };
+            if !app.driver.engine.config().onboarding_done {
+                // First launch: show onboarding; it persists the flag itself.
+                if let Err(error) = app.open_window("--onboarding") {
+                    eprintln!("onboarding: {error}");
+                }
+            }
+            Ok(Box::new(app))
         }),
     )
     .map_err(err)
+}
+impl LinuxApp {
+    /// Spawns `--settings` / `--onboarding` as a child window process, keeping
+    /// at most one such window open.
+    fn open_window(&mut self, flag: &str) -> Result<()> {
+        if let Some(child) = &mut self.settings_child {
+            if child.try_wait().map_err(err)?.is_none() {
+                return Ok(());
+            }
+        }
+        let mut command = std::process::Command::new(std::env::current_exe().map_err(err)?);
+        command.arg(flag);
+        if let Some(path) = &self.save_path {
+            command.arg("--config").arg(path);
+        }
+        self.settings_child = Some(command.spawn().map_err(err)?);
+        Ok(())
+    }
 }
 struct LinuxApp {
     driver: LinuxDriver,
@@ -995,19 +1021,8 @@ impl LinuxApp {
                 })?;
                 self.enabled = false;
             }
-            TrayAction::Settings => {
-                if let Some(child) = &mut self.settings_child {
-                    if child.try_wait().map_err(err)?.is_none() {
-                        return Ok(());
-                    }
-                }
-                let mut command = std::process::Command::new(std::env::current_exe().map_err(err)?);
-                command.arg("--settings");
-                if let Some(path) = &self.save_path {
-                    command.arg("--config").arg(path);
-                }
-                self.settings_child = Some(command.spawn().map_err(err)?);
-            }
+            TrayAction::Settings => self.open_window("--settings")?,
+            TrayAction::Onboarding => self.open_window("--onboarding")?,
             TrayAction::Quit => {
                 self.driver.dispatch(Event::Cancel { t })?;
                 // Service pending clipboard restoration before exiting.

@@ -967,6 +967,7 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 last_sync: Instant::now(),
                 last_x_activity: Instant::now(),
                 last_frame: Instant::now(),
+                shape: Vec::new(),
             };
             if !app.driver.engine.config().onboarding_done {
                 // First launch: show onboarding; it persists the flag itself.
@@ -1013,8 +1014,55 @@ struct LinuxApp {
     saved: Config,
     frames: u8,
     last_sync: Instant,
+    /// Window shape last applied (pixel rects), to avoid re-sending it per frame.
+    shape: Vec<(i16, i16, u16, u16)>,
 }
 impl LinuxApp {
+    /// Limit the menu window's visible and input region to the drawn cards so
+    /// the transparent margin neither paints grey nor swallows clicks (M-5).
+    fn apply_shape(&mut self, ppp: f32) {
+        use x11rb::protocol::shape::{self, ConnectionExt as _};
+        let rects: Vec<xproto::Rectangle> = self
+            .menu
+            .hit_rects()
+            .iter()
+            .map(|r| xproto::Rectangle {
+                x: (r.left() * ppp).floor() as i16,
+                y: (r.top() * ppp).floor() as i16,
+                width: (r.width() * ppp).ceil() as u16,
+                height: (r.height() * ppp).ceil() as u16,
+            })
+            .collect();
+        let key: Vec<_> = rects
+            .iter()
+            .map(|r| (r.x, r.y, r.width, r.height))
+            .collect();
+        if key.is_empty() || key == self.shape {
+            return;
+        }
+        let conn = &self.driver.engine.platform().conn;
+        for kind in [shape::SK::BOUNDING, shape::SK::INPUT] {
+            let _ = conn.shape_rectangles(
+                shape::SO::SET,
+                kind,
+                xproto::ClipOrdering::UNSORTED,
+                self.window,
+                0,
+                0,
+                &rects,
+            );
+        }
+        let _ = conn.flush();
+        self.shape = key;
+    }
+    /// Pointer position inside the menu window straight from the X server.
+    /// winit's cached position goes stale when the menu is re-mapped under a
+    /// still pointer, so presses landed on the wrong spot (report v4 B-2).
+    fn pointer_in_window(&self) -> Option<(i16, i16)> {
+        let conn = &self.driver.engine.platform().conn;
+        let reply = conn.query_pointer(self.window).ok()?.reply().ok()?;
+        reply.same_screen.then_some((reply.win_x, reply.win_y))
+    }
     fn warm_up_menu(&self, ctx: &eframe::egui::Context, frame: u8) {
         use crate::engine::{Choice, FormatItem, MenuKind, MenuModel};
         let config = self.driver.engine.config();
@@ -1101,6 +1149,54 @@ impl Drop for LinuxApp {
     }
 }
 impl eframe::App for LinuxApp {
+    fn raw_input_hook(&mut self, ctx: &eframe::egui::Context, raw: &mut eframe::egui::RawInput) {
+        use eframe::egui;
+        let has_button = raw
+            .events
+            .iter()
+            .any(|e| matches!(e, egui::Event::PointerButton { .. }));
+        if !has_button || self.shown.is_none() {
+            return;
+        }
+        let Some((x, y)) = self.pointer_in_window() else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        let actual = egui::pos2(f32::from(x) / ppp, f32::from(y) / ppp);
+        let mut cancel = false;
+        let mut fixed = Vec::with_capacity(raw.events.len() + 1);
+        for event in raw.events.drain(..) {
+            if let egui::Event::PointerButton {
+                button,
+                pressed,
+                modifiers,
+                ..
+            } = event
+            {
+                fixed.push(egui::Event::PointerMoved(actual));
+                cancel |= pressed
+                    && button == egui::PointerButton::Primary
+                    && self.menu.cancel_hit(actual);
+                fixed.push(egui::Event::PointerButton {
+                    pos: actual,
+                    button,
+                    pressed,
+                    modifiers,
+                });
+            } else {
+                fixed.push(event);
+            }
+        }
+        raw.events = fixed;
+        if cancel {
+            // Cancel on pointer down, before this frame can poll a finished
+            // conversion and paste it.
+            let t = self.driver.engine.platform().now();
+            if let Err(error) = self.driver.dispatch(Event::Cancel { t }) {
+                eprintln!("CleanCopy: {error}");
+            }
+        }
+    }
     fn update(&mut self, ctx: &eframe::egui::Context, _: &mut eframe::Frame) {
         use eframe::egui;
         let frame_started = Instant::now();
@@ -1186,6 +1282,7 @@ impl eframe::App for LinuxApp {
                     eprintln!("CleanCopy: {error}");
                 }
             }
+            self.apply_shape(ctx.pixels_per_point());
         }
         let config_dirty =
             toml::to_string(self.driver.engine.config()).ok() != toml::to_string(&self.saved).ok();

@@ -107,6 +107,25 @@ impl Harness {
             .unwrap()
             .data
     }
+    /// The menu's input region covers only the cards, not the 640x360 canvas.
+    fn assert_shaped(&self, window: u32) {
+        use x11rb::protocol::shape::{ConnectionExt as _, SK};
+        let (c, _) = x11rb::connect(Some(&self.display)).unwrap();
+        let rects = c
+            .shape_get_rectangles(window, SK::INPUT)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .rectangles;
+        let area: u32 = rects
+            .iter()
+            .map(|r| u32::from(r.width) * u32::from(r.height))
+            .sum();
+        assert!(
+            !rects.is_empty() && area < 640 * 360 / 2,
+            "menu input region must be limited to the cards: {rects:?}"
+        );
+    }
     fn open(&self, full_hotkey: bool, secondary: bool, shot: &str) -> u32 {
         let ready_count = self.metadata_completions();
         let id = self.open_measured(full_hotkey, secondary, shot, false).0;
@@ -153,13 +172,14 @@ impl Harness {
         let id = found.unwrap();
         // Real rendered contents: format-panel interior is white only when expanded.
         wait("menu painted with expected contents", || {
+            // The main card interior is white once painted; the format panel
+            // at 580,100 is white only when expanded. Outside the cards the
+            // window is shaped away (report v4 M-5), so no grey margin.
+            let card = self.pixel(id, 36, 130);
             let p = self.pixel(id, 580, 100);
-            if secondary {
-                p[..3] == [255, 255, 255]
-            } else {
-                p[..3] == [242, 237, 237]
-            }
+            card[..3] == [255, 255, 255] && ((p[..3] == [255, 255, 255]) == secondary)
         });
+        self.assert_shaped(id);
         let elapsed = start.elapsed();
         let route = if full_hotkey {
             "Ctrl+Alt+V→full-menu-visible"

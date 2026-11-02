@@ -355,12 +355,14 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         // Mapping alone is not evidence of visible menu contents. Observe the
         // native drawable's collapsed format-panel background after painting.
         wait_for("painted full menu", || {
+            // Main card interior (white); the window outside the cards is
+            // shaped away (report v4 M-5).
             let pixel = conn
-                .get_image(ImageFormat::Z_PIXMAP, menu_window, 580, 100, 1, 1, u32::MAX)
+                .get_image(ImageFormat::Z_PIXMAP, menu_window, 36, 130, 1, 1, u32::MAX)
                 .unwrap()
                 .reply()
                 .unwrap();
-            pixel.data[..3] == [242, 237, 237]
+            pixel.data[..3] == [255, 255, 255]
         });
         println!(
             "MEASURE Ctrl+Alt+V→full-menu-visible: {:.2} ms (native mapped window + expected painted panel)",

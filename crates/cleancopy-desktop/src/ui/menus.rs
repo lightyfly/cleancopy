@@ -25,9 +25,22 @@ pub struct MenuState {
     expanded: bool,
     in_submenu: bool,
     remember: bool,
+    /// Card rectangles drawn in the last frame (points); the native host
+    /// limits the window's visible and input region to these (report v4 M-5).
+    hit_rects: Vec<Rect>,
+    /// The 取消 target while a conversion runs (points).
+    cancel_rect: Option<Rect>,
 }
 
 impl MenuState {
+    /// Card rectangles of the last frame, in points.
+    pub fn hit_rects(&self) -> &[Rect] {
+        &self.hit_rects
+    }
+    /// True when `pos` (points) presses the 取消 button of a running conversion.
+    pub fn cancel_hit(&self, pos: Pos2) -> bool {
+        self.cancel_rect.is_some_and(|r| r.contains(pos))
+    }
     /// Draw a standalone menu canvas, returning only model-authorized engine events.
     /// `secondary` opens the format panel immediately; `MenuKind::Secondary` does too.
     pub fn show(&mut self, ctx: &egui::Context, model: &MenuModel, secondary: bool) -> Vec<Event> {
@@ -60,6 +73,9 @@ impl MenuState {
                     + ROW * model.formats.len() as f32
                     + if model.show_remember { 42.0 } else { 0.0 };
                 let (main, sub) = menu_rects(bounds, sub_height);
+                self.hit_rects.clear();
+                self.hit_rects.push(main);
+                self.cancel_rect = None;
                 panel(ui, main);
                 let summary = Rect::from_min_size(
                     main.min + Vec2::new(16.0, 8.0),
@@ -233,6 +249,7 @@ impl MenuState {
                         Vec2::new(54.0, 24.0),
                     );
                     text(ui, cancel.left_center(), "取消", 12.0, ACCENT);
+                    self.cancel_rect = Some(cancel);
                     // Hit-test the raw press position instead of egui's hover
                     // state: when the menu maps under a still pointer, a single
                     // move + click arrive in one frame and `clicked()` can miss
@@ -271,6 +288,7 @@ impl MenuState {
                     );
                 }
                 if self.expanded {
+                    self.hit_rects.push(sub);
                     panel(ui, sub);
                     text(
                         ui,
@@ -1247,6 +1265,41 @@ mod tests {
             );
             if pressed {
                 assert_eq!(events, vec![Event::Cancel { t: TIME }]);
+            }
+        }
+    }
+
+    /// Report v4 M-5/B-2: the native hit region is the cards only, never the
+    /// whole 640x360 canvas, and the cancel target is exposed for press-time
+    /// handling by the host.
+    #[test]
+    fn hit_region_is_limited_to_cards_and_cancel_hit_works() {
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(640.0, 360.0));
+        let ctx = egui::Context::default();
+        for converting in [false, true] {
+            let mut model = render_model();
+            model.converting = converting;
+            let mut state = MenuState::default();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    state.show(ctx, &model, false);
+                },
+            );
+            let rects = state.hit_rects();
+            assert!(!rects.is_empty());
+            let area: f32 = rects.iter().map(|r| r.area()).sum();
+            assert!(area < screen.area() * 0.6, "hit area {area}");
+            assert!(!rects.iter().any(|r| r.contains(Pos2::new(5.0, 5.0))));
+            assert!(!rects.iter().any(|r| r.contains(Pos2::new(630.0, 350.0))));
+            assert_eq!(state.cancel_hit(Pos2::new(300.0, 200.0)), converting);
+            assert!(!state.cancel_hit(Pos2::new(5.0, 5.0)));
+            if converting {
+                let cancel = state.cancel_rect.unwrap();
+                assert!(rects.iter().any(|r| r.contains_rect(cancel)));
             }
         }
     }

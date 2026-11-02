@@ -21,7 +21,7 @@ html2md = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 cleancopy-clipboard = { path = "../cleancopy-clipboard" }
-x11rb = { version = "0.13", features = ["xtest"] }
+x11rb = { version = "0.13", features = ["xtest", "shape"] }
 libc = "0.2"
 raw-window-handle = "0.6"
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }

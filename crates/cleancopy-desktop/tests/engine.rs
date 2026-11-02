@@ -1546,3 +1546,19 @@ fn recognized_app_silent_paste_never_shows_a_loading_menu() {
     assert_eq!(e.platform().async_read.as_ref().unwrap().started, 0);
     assert_eq!(e.platform().pastes, 1);
 }
+
+/// Report v4 B-2: a cancel that arrives after the worker finished but before
+/// the engine polled the result must still win; nothing is pasted.
+#[test]
+fn cancel_after_worker_finished_but_before_poll_never_pastes() {
+    let mut e = large_engine();
+    let original = e.platform().clipboard.clone();
+    hot(&mut e, 0);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    e.handle(Event::Cancel { t: 1 }).unwrap();
+    timer(&mut e, 100);
+    timer(&mut e, 10_000);
+    assert_eq!(e.platform().pastes, 0);
+    assert!(e.platform().writes.is_empty());
+    assert_eq!(e.platform().clipboard, original);
+}

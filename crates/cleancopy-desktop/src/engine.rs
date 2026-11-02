@@ -811,6 +811,10 @@ impl<P: Platform> Engine<P> {
         };
         let conversion = self.conversion.take().unwrap();
         self.platform.hide_menu()?;
+        // Last check right before pasting: a cancel that raced the worker wins.
+        if conversion.cancelled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let Some(written) = result else {
             return self
                 .platform

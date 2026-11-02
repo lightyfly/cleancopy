@@ -578,21 +578,34 @@ impl LinuxDriver {
         Ok(handled)
     }
 }
-/// Give up waiting for the paste target after this long (report v7 D-A).
+/// No SelectionRequest at all after this long: the paste went nowhere.
 pub const X11_RESTORE_TIMEOUT_MS: u64 = 5000;
+/// Once reading started, no request/chunk for this long: the reader is gone.
+pub const X11_RESTORE_STALL_MS: u64 = 5000;
+/// Absolute cap on waiting, however slowly the reader progresses.
+pub const X11_RESTORE_CAP_MS: u64 = 30_000;
 /// Quiet time after the last request/chunk before the read counts as done:
 /// a target may ask for a second data target right after the first.
 pub const X11_RESTORE_QUIET_MS: u64 = 100;
-/// X11 restore rule: wait until the target has completed at least one data
-/// SelectionRequest, every INCR transfer has finished and the owner has been
-/// quiet briefly; stop waiting at once if a newer copy took the selection
-/// (the engine then skips restoring), or after 5 s.
+/// X11 restore rule (report v7 D-A, v8):
+/// - a newer copy took the selection: stop at once (the engine then skips);
+/// - 30 s absolute cap;
+/// - no request ever arrived: give up after 5 s;
+/// - reading started: never restore mid-transfer; restore once a data
+///   target has been served, no INCR is active and the owner has been quiet
+///   100 ms; if nothing moved for > 5 s, the reader is gone.
 pub fn x11_restore_ready(elapsed: u64, progress: cleancopy_clipboard::TransferProgress) -> bool {
-    progress.replaced
-        || elapsed >= X11_RESTORE_TIMEOUT_MS
-        || (progress.served > 0
-            && progress.active == 0
-            && progress.idle >= std::time::Duration::from_millis(X11_RESTORE_QUIET_MS))
+    let idle = u64::try_from(progress.idle.as_millis()).unwrap_or(u64::MAX);
+    if progress.replaced || elapsed >= X11_RESTORE_CAP_MS {
+        return true;
+    }
+    if progress.requested == 0 {
+        return elapsed >= X11_RESTORE_TIMEOUT_MS;
+    }
+    if idle > X11_RESTORE_STALL_MS {
+        return true;
+    }
+    progress.active == 0 && progress.served > 0 && idle >= X11_RESTORE_QUIET_MS
 }
 /// Onboarding's own X11 grab of the paste hotkey for the 「试一试」 step.
 ///
@@ -1796,6 +1809,7 @@ mod restore_tests {
     fn p(served: u64, active: usize, idle: u64, replaced: bool) -> TransferProgress {
         TransferProgress {
             served,
+            requested: served + active as u64,
             active,
             idle: Duration::from_millis(idle),
             replaced,
@@ -1813,7 +1827,21 @@ mod restore_tests {
         assert!(x11_restore_ready(150, p(1, 0, 100, false)));
         // Newer copy: stop waiting (the engine then skips the restore).
         assert!(x11_restore_ready(150, p(0, 1, 0, true)));
-        // Timeout.
-        assert!(x11_restore_ready(5000, p(0, 1, 0, false)));
+        // No request ever: 5 s timeout.
+        assert!(!x11_restore_ready(4999, p(0, 0, 4999, false)));
+        assert!(x11_restore_ready(5000, p(0, 0, 5000, false)));
+        // Reading started (report v8: WPS starts at ~1.9 s, still reading at
+        // 5 s): no 5 s timeout while it progresses.
+        assert!(!x11_restore_ready(5000, p(0, 1, 20, false)));
+        assert!(!x11_restore_ready(29_000, p(1, 1, 20, false)));
+        // Only TARGETS asked so far, data request pending: keep waiting.
+        let mut targets_only = p(0, 0, 3000, false);
+        targets_only.requested = 1;
+        assert!(!x11_restore_ready(6000, targets_only));
+        // Stalled > 5 s mid-transfer: the reader is gone.
+        assert!(!x11_restore_ready(9000, p(0, 1, 5000, false)));
+        assert!(x11_restore_ready(9000, p(0, 1, 5001, false)));
+        // Absolute cap.
+        assert!(x11_restore_ready(30_000, p(1, 1, 20, false)));
     }
 }

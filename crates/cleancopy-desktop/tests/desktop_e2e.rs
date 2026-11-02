@@ -40,14 +40,20 @@ fn screenshot_dir(root: &Path) -> PathBuf {
     fs::create_dir_all(&dir).unwrap();
     dir
 }
-fn wait(label: &str, mut f: impl FnMut() -> bool) {
+fn wait(label: &str, f: impl FnMut() -> bool) {
+    wait_every(label, 5, f);
+}
+/// Poll every `ms`. Clipboard polls must leave the owner quiet for longer
+/// than its 100 ms "read finished" window, or the restore waits for the
+/// 5 s stall rule (each read counts as a target read).
+fn wait_every(label: &str, ms: u64, mut f: impl FnMut() -> bool) {
     let start = Instant::now();
     while !f() {
         assert!(
             start.elapsed() < Duration::from_secs(15),
             "timeout: {label}"
         );
-        thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(ms));
     }
 }
 impl Drop for Harness {
@@ -262,7 +268,7 @@ impl Harness {
             .collect()
     }
     fn restored(&self, before: &[(String, Vec<u8>, Vec<u8>)]) {
-        wait("original text restored", || {
+        wait_every("original text restored", 200, || {
             self.read("UTF8_STRING").0 == before.iter().find(|t| t.0 == "UTF8_STRING").unwrap().1
         });
         assert_eq!(
@@ -307,13 +313,17 @@ impl Harness {
         wait("fixture ready", || dir.join("ready").exists());
     }
     fn target(&mut self, class: &str) -> PathBuf {
-        let dir = self.dir.path().join(class);
+        self.target_env(class, class, &[])
+    }
+    fn target_env(&mut self, class: &str, name: &str, envs: &[(&str, &str)]) -> PathBuf {
+        let dir = self.dir.path().join(name);
         self.spawn(
             Command::new(self.bin.join("examples/target"))
                 .env("DISPLAY", &self.display)
+                .envs(envs.iter().copied())
                 .args(["app", class])
                 .arg(&dir),
-            class,
+            name,
         );
         wait("target mapped", || dir.join("ready").exists());
         self.focus(&dir);
@@ -568,7 +578,7 @@ fn desktop_runtime_matrix() {
     let web_output = String::from_utf8(h.paste(&gedit, 3)).unwrap();
     assert!(web_output.contains("一、Web heading"), "{web_output}");
     assert!(web_output.contains("web bold text"), "{web_output}");
-    wait("HTML restored", || {
+    wait_every("HTML restored", 200, || {
         let output = Command::new(h.bin.join("examples/target"))
             .env("DISPLAY", &h.display)
             .args(["read", "text/html"])
@@ -578,6 +588,45 @@ fn desktop_runtime_matrix() {
     });
     assert_eq!(h.read("text/html"), html_original);
     println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
+
+    // Report v8 D-A: a reader that starts 2 s after Ctrl+V and whose INCR
+    // read takes > 6 s must get the converted text, and the original must
+    // still be restored afterwards.
+    let big = "## 段落\n\n**粗体** 内容\n\n".repeat(36_000);
+    h.fixture(big.as_bytes(), "slow-fixture");
+    let slow_before = h.snapshot();
+    let slow = h.target_env(
+        "gedit",
+        "slow-gedit",
+        &[
+            ("CLEANCOPY_TARGET_READ_DELAY_MS", "2000"),
+            ("CLEANCOPY_TARGET_CHUNK_DELAY_MS", "1500"),
+        ],
+    );
+    let started = Instant::now();
+    h.key(&["ctrl+shift+v"]);
+    let path = slow.join("paste-1.bin");
+    wait_every("slow reader paste", 100, || {
+        assert!(started.elapsed() < Duration::from_secs(40), "slow paste");
+        path.exists()
+    });
+    let read_secs = started.elapsed().as_secs_f64();
+    let out = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+    assert!(
+        read_secs > 8.0,
+        "slow reader finished too fast: {read_secs:.1} s"
+    );
+    assert!(
+        out.starts_with("一、段落") && !out.contains("## ") && !out.contains("**"),
+        "slow reader got unconverted text: {:?}",
+        &out[..out.len().min(80)]
+    );
+    h.restored(&slow_before);
+    println!(
+        "PASS v8 D-A slow reader (2 s delay, {} B in {read_secs:.1} s) got converted text; original restored after {:.1} s",
+        out.len(),
+        started.elapsed().as_secs_f64()
+    );
 
     // Secondary-menu latency distribution: the first press after launch plus
     // 19 warm presses, all on a target with no App rule.

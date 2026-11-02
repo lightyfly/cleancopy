@@ -436,6 +436,7 @@ impl NativeClipboard {
         let last = stats.last_ms.load(Ordering::Acquire);
         Some(TransferProgress {
             served: stats.served.load(Ordering::Acquire),
+            requested: stats.requested.load(Ordering::Acquire),
             active: stats.active.load(Ordering::Acquire),
             idle: Duration::from_millis(stats.elapsed_ms().saturating_sub(last)),
             replaced: stats.replaced.load(Ordering::Acquire),
@@ -531,6 +532,8 @@ pub struct TransferProgress {
     /// Data-target requests fully answered (small replies and finished INCR
     /// transfers); `TARGETS` queries are not counted.
     pub served: u64,
+    /// Every SelectionRequest received, `TARGETS` included: reading started.
+    pub requested: u64,
     /// INCR transfers still in progress.
     pub active: usize,
     /// Time since the last request or chunk.
@@ -541,6 +544,7 @@ pub struct TransferProgress {
 struct TransferStats {
     start: Instant,
     served: AtomicU64,
+    requested: AtomicU64,
     active: AtomicUsize,
     last_ms: AtomicU64,
     replaced: AtomicBool,
@@ -550,6 +554,7 @@ impl TransferStats {
         Self {
             start: Instant::now(),
             served: AtomicU64::new(0),
+            requested: AtomicU64::new(0),
             active: AtomicUsize::new(0),
             last_ms: AtomicU64::new(0),
             replaced: AtomicBool::new(false),
@@ -675,6 +680,7 @@ impl Owner {
     }
     fn request(&mut self, request: SelectionRequestEvent) -> Result<()> {
         self.stats.touch();
+        self.stats.requested.fetch_add(1, Ordering::AcqRel);
         let property = if request.property == 0 {
             request.target
         } else {

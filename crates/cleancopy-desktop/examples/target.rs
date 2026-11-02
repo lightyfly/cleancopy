@@ -68,9 +68,23 @@ fn read(conn: &RustConnection, window: Window, target: Atom) -> Result<GetProper
     let clipboard = atom(conn, "CLIPBOARD")?;
     let property = atom(conn, "_CLEANCOPY_TEST_DATA")?;
     let incr = atom(conn, "INCR")?;
+    // Optional slow reader (report v8 D-A, WPS starts reading ~1.9 s late and
+    // takes seconds per transfer): delay before the request and per chunk.
+    let delay = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_default()
+    };
+    let (read_delay, chunk_delay) = (
+        delay("CLEANCOPY_TARGET_READ_DELAY_MS"),
+        delay("CLEANCOPY_TARGET_CHUNK_DELAY_MS"),
+    );
+    thread::sleep(read_delay);
     conn.convert_selection(window, clipboard, target, property, x11rb::CURRENT_TIME)?;
     conn.flush()?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let Event::SelectionNotify(event) = wait(conn, deadline)? {
             if event.selection != clipboard || event.target != target {
@@ -96,6 +110,7 @@ fn read(conn: &RustConnection, window: Window, target: Atom) -> Result<GetProper
                     {
                         continue;
                     }
+                    thread::sleep(chunk_delay);
                     let chunk = conn
                         .get_property(true, window, property, AtomEnum::ANY, 0, u32::MAX)?
                         .reply()?;

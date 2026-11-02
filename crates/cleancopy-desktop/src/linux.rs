@@ -572,6 +572,8 @@ pub struct TryHotkeyGrab {
     /// Keycode/modifier pairs currently grabbed, and the hotkey text they came from.
     grabbed: Vec<(u8, u16)>,
     hotkey: String,
+    /// Last X focus window and whether it belongs to this process.
+    focus: Option<(Window, bool)>,
 }
 impl TryHotkeyGrab {
     pub fn new(ctx: &eframe::egui::Context) -> Result<Self> {
@@ -587,7 +589,78 @@ impl TryHotkeyGrab {
             locks: lock_variants(&lock_masks),
             grabbed: Vec::new(),
             hotkey: String::new(),
+            focus: None,
         })
+    }
+    /// Whether X input focus is on (a child of) one of this process's
+    /// top-level windows. Unaffected by the FocusOut an active grab causes.
+    pub fn owns_focus(&mut self) -> bool {
+        let Some(focus) = self
+            .conn
+            .get_input_focus()
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.focus)
+        else {
+            return false;
+        };
+        // PointerRoot (no window manager, focus follows the pointer): the
+        // focus is the top-level under the pointer.
+        let focus = if focus == 1 {
+            match self
+                .conn
+                .query_pointer(self.root)
+                .ok()
+                .and_then(|c| c.reply().ok())
+            {
+                Some(pointer) => pointer.child,
+                None => return false,
+            }
+        } else {
+            focus
+        };
+        if let Some((window, ours)) = self.focus {
+            if window == focus {
+                return ours;
+            }
+        }
+        let ours = self.window_is_ours(focus);
+        self.focus = Some((focus, ours));
+        ours
+    }
+    fn window_is_ours(&self, mut window: Window) -> bool {
+        let Some(pid_atom) = self
+            .conn
+            .intern_atom(true, b"_NET_WM_PID")
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.atom)
+        else {
+            return false;
+        };
+        let me = std::process::id();
+        // PointerRoot (1) / None (0) are not windows.
+        while window > 1 && window != self.root {
+            let pid = self
+                .conn
+                .get_property(false, window, pid_atom, AtomEnum::CARDINAL, 0, 1)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .and_then(|r| r.value32().and_then(|mut v| v.next()));
+            if let Some(pid) = pid {
+                return pid == me;
+            }
+            match self
+                .conn
+                .query_tree(window)
+                .ok()
+                .and_then(|c| c.reply().ok())
+            {
+                Some(tree) => window = tree.parent,
+                None => return false,
+            }
+        }
+        false
     }
     /// Hold the grab while `want`; returns false while a wanted grab is still
     /// refused (the daemon has not yet released it), so the caller retries.

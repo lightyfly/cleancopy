@@ -147,8 +147,9 @@ pub struct DesktopApp {
     /// Linux: onboarding's own grab of the paste hotkey during 「试一试」.
     #[cfg(target_os = "linux")]
     try_grab: Option<crate::linux::TryHotkeyGrab>,
-    #[cfg(target_os = "linux")]
-    try_unfocused_since: Option<Instant>,
+    /// Whether the onboarding window holds X input focus; the hotkey (and
+    /// the daemon pause marker) is only taken while it does.
+    try_focused: bool,
 }
 impl DesktopApp {
     pub fn new(
@@ -194,8 +195,7 @@ impl DesktopApp {
             pause_marker: None,
             #[cfg(target_os = "linux")]
             try_grab: None,
-            #[cfg(target_os = "linux")]
-            try_unfocused_since: None,
+            try_focused: true,
         };
         if view == View::Settings && std::env::var_os(FOCUS_HOTKEY_ENV).is_some() {
             app.settings.focus_hotkey();
@@ -214,42 +214,41 @@ impl DesktopApp {
     /// hotkey via an X11 grab so every press (however fast) formats.
     #[cfg(target_os = "linux")]
     fn try_step_hotkey(&mut self, ctx: &egui::Context) {
-        // An activated grab itself makes X report the window unfocused for
-        // the length of the press, so only a sustained focus loss (the user
-        // switched apps) gives the hotkey back.
-        let focused = ctx.input(|i| i.focused);
-        let now = Instant::now();
-        let unfocused_since = if focused {
-            None
-        } else {
-            Some(*self.try_unfocused_since.get_or_insert(now))
-        };
-        self.try_unfocused_since = unfocused_since;
-        let recently_focused =
-            unfocused_since.is_none_or(|since| now - since < std::time::Duration::from_millis(500));
-        if !focused && recently_focused && self.try_grab.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        if !self.onboarding.wants_hotkey_pause() {
+            self.try_grab = None;
+            self.try_focused = true;
+            return;
         }
-        let want =
-            self.onboarding.wants_hotkey_pause() && self.pause_marker.is_some() && recently_focused;
-        if want && self.try_grab.is_none() {
+        if self.try_grab.is_none() {
             match crate::linux::TryHotkeyGrab::new(ctx) {
                 Ok(grab) => self.try_grab = Some(grab),
-                Err(error) => eprintln!("onboarding hotkey grab unavailable: {error}"),
+                Err(error) => {
+                    eprintln!("onboarding hotkey grab unavailable: {error}");
+                    return;
+                }
             }
         }
         let Some(grab) = &mut self.try_grab else {
             return;
         };
-        // Drain before syncing: an activated grab moves X focus to the grabbing
-        // client for the duration of the press, so this frame may see the
-        // window as unfocused and drop the grab.
+        // Drain first: presses that arrived while we held the grab count even
+        // if focus is leaving now.
         for _ in 0..grab.drain() {
             self.onboarding.native_hotkey(ctx, self.engine.config());
         }
+        // X input focus, not egui's: an activated key grab sends the window a
+        // FocusOut (mode Grab) for the length of the press while X focus stays
+        // put. A real focus change (another app) releases the grab and the
+        // pause marker in this same frame, so the daemon takes the hotkey back.
+        self.try_focused = grab.owns_focus();
+        let want = self.try_focused && self.pause_marker.is_some();
         let hotkey = self.engine.config().hotkey.clone();
         if !grab.sync(want, &hotkey) {
             // The daemon releases its grab within ~250 ms of the pause marker.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        if self.try_focused && self.pause_marker.is_none() {
+            // Marker is written after this frame's show(); grab next frame.
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
     }
@@ -431,9 +430,15 @@ impl eframe::App for DesktopApp {
                     self.open_hotkey_settings();
                 }
                 let pause = self.onboarding.wants_hotkey_pause()
-                    && outcome != onboarding::Outcome::Finished;
+                    && self.try_focused
+                    && !matches!(
+                        outcome,
+                        onboarding::Outcome::Finished | onboarding::Outcome::Closed
+                    );
                 self.set_hotkey_pause(pause);
-                if outcome == onboarding::Outcome::Finished && self.error.is_none() {
+                if outcome == onboarding::Outcome::Finished && self.error.is_none()
+                    || outcome == onboarding::Outcome::Closed
+                {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
@@ -565,8 +570,7 @@ mod tests {
             pause_marker: None,
             #[cfg(target_os = "linux")]
             try_grab: None,
-            #[cfg(target_os = "linux")]
-            try_unfocused_since: None,
+            try_focused: true,
         }
     }
 

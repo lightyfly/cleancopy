@@ -106,6 +106,9 @@ fn request_permission() {
 pub enum Outcome {
     Open,
     Finished,
+    /// Esc: close the window like its close button (onboarding not marked
+    /// done, the hotkey pause is released; report v5 N-5).
+    Closed,
     /// "更改快捷键": open settings at the hotkey item.
     OpenHotkeySettings,
 }
@@ -293,6 +296,9 @@ impl OnboardingState {
                     }
                 });
             });
+        if outcome == Outcome::Open && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            outcome = Outcome::Closed;
+        }
         if std::mem::take(&mut self.open_hotkey_settings) && outcome == Outcome::Open {
             outcome = Outcome::OpenHotkeySettings;
         }
@@ -821,5 +827,34 @@ mod tests {
             Outcome::Finished
         );
         assert!(config.onboarding_done);
+    }
+
+    #[test]
+    fn escape_closes_on_every_step_without_finishing() {
+        for step in 0..STEPS {
+            let ctx = egui::Context::default();
+            let mut state = OnboardingState {
+                step,
+                ..Default::default()
+            };
+            let mut config = Config::default();
+            let mut outcome = Outcome::Open;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
+                    events: vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| outcome = state.show(ctx, &mut config).1,
+            );
+            assert_eq!(outcome, Outcome::Closed, "step {step}");
+            assert!(!config.onboarding_done);
+        }
     }
 }

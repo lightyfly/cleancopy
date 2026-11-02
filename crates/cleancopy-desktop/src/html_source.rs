@@ -33,7 +33,9 @@ struct Block {
 pub fn html_to_markdown(raw: &str) -> String {
     let mut blocks = Vec::new();
     let lifted = lift_code_blocks(raw, &mut blocks);
-    let mut markdown = html2md::parse_html(&lifted);
+    // Code is still behind placeholders here, so heading rewrites cannot
+    // touch fenced code.
+    let mut markdown = atx_headings(&html2md::parse_html(&lifted));
     for (index, block) in blocks.iter().enumerate() {
         let fence = fence_for(&block.code);
         let mut code = block.code.clone();
@@ -347,6 +349,24 @@ fn decode_entities(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn markdown_output_uses_atx_headings_without_closing_hashes() {
+        let html = "<h1>项目</h1><h2>项目周报</h2><h3>主要进展</h3><h6>六</h6>\
+                    <p>正文</p><hr><p>后文</p><h2>C# 入门</h2>\
+                    <pre><code class=\"language-md\">标题\n---\n## x ##</code></pre>";
+        let md = super::html_to_markdown(html);
+        assert!(md.contains("# 项目\n"), "{md}");
+        assert!(md.contains("## 项目周报\n"), "{md}");
+        assert!(md.contains("### 主要进展\n"), "{md}");
+        assert!(md.contains("###### 六\n"), "{md}");
+        assert!(md.contains("## C# 入门"), "{md}");
+        assert!(!md.contains("==="), "{md}");
+        assert!(!md.contains("主要进展 #"), "{md}");
+        // A thematic break stays a break; fenced code is untouched.
+        assert!(md.contains("\n---\n\n后文"), "{md}");
+        assert!(md.contains("标题\n---\n## x ##"), "{md}");
+    }
+
     use super::*;
 
     const CHATGPT: &str = r#"<div class="markdown prose w-full break-words"><h2>项目周报</h2><p>示例代码：</p><pre class="!overflow-visible"><div class="contain-inline-size rounded-md border-[0.5px] border-token-border-medium relative bg-token-sidebar-surface-primary"><div class="flex items-center text-token-text-secondary px-4 py-2 text-xs font-sans justify-between h-9 bg-token-sidebar-surface-primary select-none rounded-t-[5px]">rust</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="bg-token-sidebar-surface-secondary text-token-text-secondary flex items-center rounded-sm px-2 font-sans text-xs"><span class="" data-state="closed"><button class="flex gap-1 items-center select-none px-4 py-1" aria-label="Copy"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M7 5"></path></svg>Copy code</button></span></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-rust"><span><span class="hljs-keyword">fn</span></span><span> </span><span class="hljs-title function_">main</span><span>() {
@@ -430,4 +450,56 @@ mod tests {
         );
         assert!(visible_chars(CHATGPT) < CHATGPT.chars().count() / 5);
     }
+}
+
+/// html2md writes h1/h2 as setext (`Title` + `===`/`---`) and h3+ as
+/// `### Title ###`. "Markdown 原样" output always uses plain ATX headings
+/// (`## Title`) without closing hashes (report v3 B-4).
+fn atx_headings(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let underline = |line: &str, ch: char| {
+        let t = line.trim_end();
+        t.len() >= 3 && t.chars().all(|c| c == ch)
+    };
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let text = line.trim();
+        let next = lines.get(i + 1).copied().unwrap_or("");
+        let is_text = !text.is_empty()
+            && !line.starts_with([' ', '\t'])
+            && !text.starts_with(['#', '*', '-', '+', '|', '>', '`'])
+            && !text.starts_with(|c: char| c.is_ascii_digit());
+        if is_text && underline(next, '=') {
+            out.push(format!("# {text}"));
+            i += 2;
+            continue;
+        }
+        if is_text && underline(next, '-') {
+            out.push(format!("## {text}"));
+            i += 2;
+            continue;
+        }
+        let hashes = line.chars().take_while(|&c| c == '#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            let body = line[hashes..].trim();
+            let body = body.trim_end_matches('#');
+            // Only strip a closing sequence that is separated by a space.
+            let body = if body.len() < line[hashes..].trim().len() && body.ends_with(' ') {
+                body.trim_end()
+            } else {
+                line[hashes..].trim()
+            };
+            out.push(format!("{} {body}", "#".repeat(hashes)));
+        } else {
+            out.push(line.to_owned());
+        }
+        i += 1;
+    }
+    let mut result = out.join("\n");
+    if markdown.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }

@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod engine;
+pub mod html_source;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod secure_input;

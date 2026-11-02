@@ -59,9 +59,18 @@ impl Snapshot {
         !self.formats.contains_key(TEXT_MARKDOWN) && self.formats.contains_key(TEXT_HTML)
     }
     fn source_chars(&self) -> usize {
-        self.source_bytes()
+        let Some(text) = self
+            .source_bytes()
             .and_then(|b| std::str::from_utf8(b).ok())
-            .map_or(0, |s| s.chars().count())
+        else {
+            return 0;
+        };
+        // HTML sources count what the reader sees, not tags (N-4).
+        if self.html_source() {
+            crate::html_source::visible_chars(text)
+        } else {
+            text.chars().count()
+        }
     }
 }
 
@@ -753,7 +762,7 @@ fn render(original: &Snapshot, format: Format, style: cleancopy_core::NumberingS
     let raw = original.source_text().unwrap_or_default();
     let markdown;
     let source = if original.html_source() {
-        markdown = html2md::parse_html(raw);
+        markdown = crate::html_source::html_to_markdown(raw);
         &markdown
     } else {
         raw

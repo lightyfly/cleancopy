@@ -1334,3 +1334,50 @@ fn secure_input_enabled_during_write_prevents_injection_but_restores_clipboard()
     assert_eq!(e.platform().clipboard, original);
     assert_eq!(e.platform().writes.len(), 2);
 }
+
+const CHATGPT_CODE_HTML: &str = r#"<h2>项目周报</h2><pre class="!overflow-visible"><div class="contain-inline-size rounded-md"><div class="flex items-center px-4 py-2 text-xs">rust</div><div class="sticky top-9"><div><span><button aria-label="Copy"><svg viewBox="0 0 24 24"><path d="M7 5"></path></svg>Copy code</button></span></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-rust"><span class="hljs-keyword">fn</span> <span class="hljs-title function_">main</span>() {}
+</code></div></div></pre>"#;
+
+fn html_engine(html: &str) -> Engine<Mock> {
+    let mut e = engine("unknown", "");
+    let mut original = Snapshot::default();
+    original
+        .formats
+        .insert(TEXT_HTML.into(), html.as_bytes().to_vec());
+    e.platform_mut().clipboard = original;
+    e
+}
+
+#[test]
+fn html_source_menu_counts_visible_text_not_tags() {
+    let mut e = html_engine("<h2>项目周报</h2>\n<p><strong>粗</strong>体 &amp; x</p>");
+    full(&mut e, 0);
+    // "项目周报" + newline-as-space + "粗体 & x"
+    assert_eq!(e.platform().menus[0].source_chars, 11);
+}
+
+#[test]
+fn chatgpt_code_block_header_never_leaks_into_code() {
+    for format in [
+        Format::Markdown,
+        Format::PlainStripped,
+        Format::ChineseNumbered,
+        Format::WordRichText,
+    ] {
+        let mut e = html_engine(CHATGPT_CODE_HTML);
+        full(&mut e, 0);
+        choose(&mut e, 1, Choice::Format(format));
+        let written = &e.platform().pasted[0];
+        let text = std::str::from_utf8(&written.formats[TEXT_PLAIN]).unwrap();
+        assert!(!text.contains("rustfn"), "{format:?}: {text}");
+        assert!(!text.contains("Copy code"), "{format:?}: {text}");
+        assert!(text.contains("fn main() {}"), "{format:?}: {text}");
+        if format == Format::Markdown {
+            assert!(text.contains("```rust\nfn main() {}\n```"), "{text}");
+        }
+        if format == Format::WordRichText {
+            let html = std::str::from_utf8(&written.formats[TEXT_HTML]).unwrap();
+            assert!(!html.contains("rustfn"), "{html}");
+        }
+    }
+}

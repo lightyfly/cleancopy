@@ -621,6 +621,10 @@ fn desktop_runtime_matrix() {
         "PASS S-01 real large conversion cancelled by clicking 取消; no paste and clipboard unchanged"
     );
 
+    // The settings screenshot must show the shipped defaults, not the rules
+    // this test remembered for its fake `unknown-e2e` target.
+    let clean_config = h.root.join("target/e2e-settings-default.toml");
+    let _ = std::fs::remove_file(&clean_config);
     for (name, args) in [
         ("settings", vec!["--settings"]),
         ("preview", vec!["--preview", "menu-secondary"]),
@@ -631,7 +635,11 @@ fn desktop_runtime_matrix() {
                 .env("DISPLAY", &h.display)
                 .args(args)
                 .arg("--config")
-                .arg(&config),
+                .arg(if name == "settings" {
+                    &clean_config
+                } else {
+                    &config
+                }),
             name,
         );
         wait("settings/preview window", || {
@@ -645,6 +653,10 @@ fn desktop_runtime_matrix() {
         });
         thread::sleep(Duration::from_millis(300));
         h.shot(name);
+        if name == "settings" {
+            let saved = std::fs::read_to_string(&clean_config).unwrap_or_default();
+            assert!(!saved.contains("unknown-e2e"), "{saved}");
+        }
         h.children[child].kill().unwrap();
         h.children[child].wait().unwrap();
         println!("PASS {name} launch probe");

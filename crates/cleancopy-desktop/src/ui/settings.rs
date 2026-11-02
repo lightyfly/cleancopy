@@ -796,9 +796,9 @@ fn row(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui)) {
 }
 /// Accent at 8% alpha behind the whole selected row.
 const ROW_SELECTED: Color32 = Color32::from_rgba_premultiplied(
-    (0x5B as u32 * 20 / 255) as u8,
-    (0x5B as u32 * 20 / 255) as u8,
-    (0xD6 as u32 * 20 / 255) as u8,
+    (0x5B_u32 * 20 / 255) as u8,
+    (0x5B_u32 * 20 / 255) as u8,
+    (0xD6_u32 * 20 / 255) as u8,
     20,
 );
 fn row_selected(

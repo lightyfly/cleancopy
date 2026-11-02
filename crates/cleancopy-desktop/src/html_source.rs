@@ -347,6 +347,58 @@ fn decode_entities(text: &str) -> String {
     out
 }
 
+/// html2md writes h1/h2 as setext (`Title` + `===`/`---`) and h3+ as
+/// `### Title ###`. "Markdown 原样" output always uses plain ATX headings
+/// (`## Title`) without closing hashes (report v3 B-4).
+fn atx_headings(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let underline = |line: &str, ch: char| {
+        let t = line.trim_end();
+        t.len() >= 3 && t.chars().all(|c| c == ch)
+    };
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let text = line.trim();
+        let next = lines.get(i + 1).copied().unwrap_or("");
+        let is_text = !text.is_empty()
+            && !line.starts_with([' ', '\t'])
+            && !text.starts_with(['#', '*', '-', '+', '|', '>', '`'])
+            && !text.starts_with(|c: char| c.is_ascii_digit());
+        if is_text && underline(next, '=') {
+            out.push(format!("# {text}"));
+            i += 2;
+            continue;
+        }
+        if is_text && underline(next, '-') {
+            out.push(format!("## {text}"));
+            i += 2;
+            continue;
+        }
+        let hashes = line.chars().take_while(|&c| c == '#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            let body = line[hashes..].trim();
+            let body = body.trim_end_matches('#');
+            // Only strip a closing sequence that is separated by a space.
+            let body = if body.len() < line[hashes..].trim().len() && body.ends_with(' ') {
+                body.trim_end()
+            } else {
+                line[hashes..].trim()
+            };
+            out.push(format!("{} {body}", "#".repeat(hashes)));
+        } else {
+            out.push(line.to_owned());
+        }
+        i += 1;
+    }
+    let mut result = out.join("\n");
+    if markdown.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -450,56 +502,4 @@ mod tests {
         );
         assert!(visible_chars(CHATGPT) < CHATGPT.chars().count() / 5);
     }
-}
-
-/// html2md writes h1/h2 as setext (`Title` + `===`/`---`) and h3+ as
-/// `### Title ###`. "Markdown 原样" output always uses plain ATX headings
-/// (`## Title`) without closing hashes (report v3 B-4).
-fn atx_headings(markdown: &str) -> String {
-    let lines: Vec<&str> = markdown.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let underline = |line: &str, ch: char| {
-        let t = line.trim_end();
-        t.len() >= 3 && t.chars().all(|c| c == ch)
-    };
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        let text = line.trim();
-        let next = lines.get(i + 1).copied().unwrap_or("");
-        let is_text = !text.is_empty()
-            && !line.starts_with([' ', '\t'])
-            && !text.starts_with(['#', '*', '-', '+', '|', '>', '`'])
-            && !text.starts_with(|c: char| c.is_ascii_digit());
-        if is_text && underline(next, '=') {
-            out.push(format!("# {text}"));
-            i += 2;
-            continue;
-        }
-        if is_text && underline(next, '-') {
-            out.push(format!("## {text}"));
-            i += 2;
-            continue;
-        }
-        let hashes = line.chars().take_while(|&c| c == '#').count();
-        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
-            let body = line[hashes..].trim();
-            let body = body.trim_end_matches('#');
-            // Only strip a closing sequence that is separated by a space.
-            let body = if body.len() < line[hashes..].trim().len() && body.ends_with(' ') {
-                body.trim_end()
-            } else {
-                line[hashes..].trim()
-            };
-            out.push(format!("{} {body}", "#".repeat(hashes)));
-        } else {
-            out.push(line.to_owned());
-        }
-        i += 1;
-    }
-    let mut result = out.join("\n");
-    if markdown.ends_with('\n') {
-        result.push('\n');
-    }
-    result
 }

@@ -75,9 +75,25 @@ impl MenuState {
                         grouped(model.source_chars)
                     )
                 };
-                let galley =
-                    ui.painter()
-                        .layout_no_wrap(summary_text, FontId::proportional(12.0), SUB);
+                // `.chip`: "剪贴板" in --sub, then the summary in <b> (--text).
+                let bold = crate::ui::fonts::bold_family();
+                let strong = if ui.ctx().fonts(|f| f.families().contains(&bold)) {
+                    FontId::new(12.0, bold)
+                } else {
+                    FontId::proportional(12.0)
+                };
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    "剪贴板  ",
+                    0.0,
+                    egui::TextFormat::simple(FontId::proportional(12.0), SUB),
+                );
+                job.append(
+                    &summary_text,
+                    0.0,
+                    egui::TextFormat::simple(strong, if model.loading { SUB } else { TEXT }),
+                );
+                let galley = ui.painter().layout_job(job);
                 let badge_width = if model.show_remember { 84.0 } else { 94.0 };
                 let show_badge = galley.size().x + badge_width + 8.0 <= summary.width();
                 let summary_clip = Rect::from_min_max(
@@ -415,7 +431,7 @@ pub fn tray(ctx: &egui::Context, config: &Config, enabled: &mut bool) -> Option<
         .show(ctx, |ui| {
             let bounds = ui.max_rect();
             let rect = fit_rect(
-                Rect::from_min_size(bounds.min + Vec2::splat(16.0), Vec2::new(300.0, 346.0)),
+                Rect::from_min_size(bounds.min + Vec2::splat(16.0), Vec2::new(300.0, 304.0)),
                 bounds,
             );
             panel(ui, rect);
@@ -649,19 +665,90 @@ fn row_rect(panel: Rect, y: f32) -> Rect {
         Vec2::new((panel.width() - 12.0).max(0.0), ROW),
     )
 }
+/// `.menu` from the design: `box-shadow: 0 12px 40px rgba(0,0,0,.14),
+/// 0 2px 6px rgba(0,0,0,.06)`, 1px `rgba(0,0,0,.08)` border, 12px radius.
+pub(crate) const MENU_SHADOWS: [egui::Shadow; 2] = [
+    egui::Shadow {
+        offset: [0, 12],
+        blur: 40,
+        spread: 0,
+        color: Color32::from_black_alpha(36), // .14 × 255
+    },
+    egui::Shadow {
+        offset: [0, 2],
+        blur: 6,
+        spread: 0,
+        color: Color32::from_black_alpha(15), // .06 × 255
+    },
+];
+pub(crate) const MENU_BORDER: Color32 = Color32::from_black_alpha(20); // .08 × 255
+/// The design's panel is `rgba(255,255,255,.92)` over a 30px backdrop blur.
+/// X11 has no portable compositor blur, so Linux uses the solid-colour
+/// fallback (opaque white); see docs/visual-diff.md for macOS/Windows.
+pub(crate) const MENU_FILL: Color32 = Color32::WHITE;
 fn panel(ui: &egui::Ui, rect: Rect) {
-    ui.painter().rect_filled(
-        rect.translate(Vec2::new(0.0, 4.0)),
-        12.0,
-        Color32::from_black_alpha(12),
-    );
-    ui.painter().rect_filled(rect, 12.0, Color32::WHITE);
+    for shadow in MENU_SHADOWS {
+        ui.painter().add(shadow.as_shape(rect, 12.0));
+    }
+    ui.painter().rect_filled(rect, 12.0, MENU_FILL);
     ui.painter().rect_stroke(
         rect,
         12.0,
-        Stroke::new(1.0_f32, LINE),
+        Stroke::new(1.0_f32, MENU_BORDER),
         egui::StrokeKind::Inside,
     );
+}
+/// Split a shortcut hint into design `.kbd span` key caps.
+pub(crate) fn key_caps(hint: &str) -> Vec<String> {
+    if hint.is_empty() || hint == "›" {
+        return Vec::new();
+    }
+    if hint.contains('+') && hint.len() > 1 {
+        return hint.split('+').map(str::to_owned).collect();
+    }
+    if hint.starts_with(['⌘', '⇧', '⌥', '⌃']) {
+        return hint.chars().map(String::from).collect();
+    }
+    vec![hint.to_owned()]
+}
+/// Paint key caps right-aligned at `right`; returns the total width.
+/// `.kbd span`: min 18×18, padding 0 4px, 1px `--line` border, 4px radius,
+/// `#FAFAFB` fill, 500 11px `--mute` text, 3px gap. Selected rows use
+/// `rgba(255,255,255,.15)` fill, `rgba(255,255,255,.3)` border, white text.
+fn paint_key_caps(
+    painter: &egui::Painter,
+    right: f32,
+    center_y: f32,
+    caps: &[String],
+    on: bool,
+) -> f32 {
+    let font = FontId::proportional(11.0);
+    let (fill, stroke, color) = if on {
+        (
+            Color32::from_white_alpha(38),
+            Color32::from_white_alpha(77),
+            Color32::WHITE,
+        )
+    } else {
+        (Color32::from_rgb(250, 250, 251), LINE, MUTED)
+    };
+    let mut x = right;
+    for cap in caps.iter().rev() {
+        let galley = painter.layout_no_wrap(cap.clone(), font.clone(), color);
+        let width = (galley.size().x + 8.0).max(18.0);
+        let rect =
+            Rect::from_min_size(Pos2::new(x - width, center_y - 9.0), Vec2::new(width, 18.0));
+        painter.rect_filled(rect, 4.0, fill);
+        painter.rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0_f32, stroke),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+        x -= width + 3.0;
+    }
+    right - (x + 3.0)
 }
 fn line(ui: &egui::Ui, x1: f32, x2: f32, y: f32) {
     ui.painter().line_segment(
@@ -713,14 +800,31 @@ fn row(
     } else {
         TEXT
     };
+    // `.item .ic`: --sub normally, rgba(255,255,255,.8) on the selected row.
+    let icon_color = if !enabled {
+        MUTED
+    } else if highlighted {
+        Color32::from_white_alpha(204)
+    } else {
+        SUB
+    };
     painter.text(
         rect.min + Vec2::new(18.0, 15.0),
         Align2::CENTER_CENTER,
         icon,
         FontId::proportional(13.0),
-        color,
+        icon_color,
     );
-    let hint_width = if hint.is_empty() {
+    let caps = key_caps(hint);
+    let hint_width = if !caps.is_empty() {
+        paint_key_caps(
+            &painter,
+            rect.right() - 10.0,
+            rect.center().y,
+            &caps,
+            highlighted,
+        ) + 12.0
+    } else if hint.is_empty() {
         0.0
     } else {
         (hint.chars().count() as f32 * 6.0 + 12.0).min(rect.width() * 0.45)
@@ -739,7 +843,7 @@ fn row(
         FontId::proportional(13.0),
         color,
     );
-    if !hint.is_empty() {
+    if !hint.is_empty() && caps.is_empty() {
         painter.text(
             rect.right_center() - Vec2::new(10.0, 0.0),
             Align2::RIGHT_CENTER,
@@ -774,6 +878,26 @@ fn grouped(value: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hints_split_into_design_key_caps() {
+        assert_eq!(key_caps("1"), ["1"]);
+        assert_eq!(key_caps("Ctrl+Z"), ["Ctrl", "Z"]);
+        assert_eq!(key_caps("Ctrl+Alt+V"), ["Ctrl", "Alt", "V"]);
+        assert_eq!(key_caps("⌘Z"), ["⌘", "Z"]);
+        assert!(key_caps("›").is_empty());
+        assert!(key_caps("").is_empty());
+    }
+    #[test]
+    fn menu_shadow_matches_design_css() {
+        // 0 12px 40px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06)
+        assert_eq!(MENU_SHADOWS[0].offset, [0, 12]);
+        assert_eq!(MENU_SHADOWS[0].blur, 40);
+        assert_eq!(MENU_SHADOWS[0].color.a(), (0.14_f32 * 255.0).round() as u8);
+        assert_eq!(MENU_SHADOWS[1].offset, [0, 2]);
+        assert_eq!(MENU_SHADOWS[1].blur, 6);
+        assert_eq!(MENU_SHADOWS[1].color.a(), (0.06_f32 * 255.0).round() as u8);
+        assert_eq!(MENU_BORDER.a(), (0.08_f32 * 255.0).round() as u8);
+    }
     #[test]
     fn navigation_wraps_and_skips_disabled() {
         assert_eq!(next_enabled(0, &[true, false, true], true), 2);
@@ -925,8 +1049,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(text.contains(&config.full_menu_hotkey.as_str()));
-        assert!(!text.contains(&config.hotkey.as_str()));
+        // The shortcut is drawn as key caps: Ctrl · Alt · M, never P.
+        let caps = text.join("|");
+        assert!(caps.contains("M|Alt|Ctrl"), "{caps}"); // painted right-to-left
+        assert!(!caps.contains("P|Shift"), "{caps}");
     }
 
     fn render_model() -> MenuModel {
@@ -972,7 +1098,8 @@ mod tests {
             let mut found_badge = false;
             for shape in output.shapes {
                 if let egui::epaint::Shape::Text(text) = shape.shape {
-                    if text.galley.job.text == format!("{label} · {} 字", grouped(chars)) {
+                    if text.galley.job.text == format!("剪贴板  {label} · {} 字", grouped(chars))
+                    {
                         assert!(shape
                             .clip_rect
                             .contains_rect(Rect::from_min_size(text.pos, text.galley.size())));

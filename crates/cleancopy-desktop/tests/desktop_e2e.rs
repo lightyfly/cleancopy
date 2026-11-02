@@ -96,13 +96,18 @@ impl Harness {
     }
     fn open(&self, full_hotkey: bool, secondary: bool, shot: &str) -> u32 {
         let ready_count = self.metadata_completions();
-        let id = self.open_measured(full_hotkey, secondary, shot, true).0;
-        if !secondary {
-            wait("asynchronous full menu metadata", || {
-                self.metadata_completions() > ready_count
-            });
-        }
+        let id = self.open_measured(full_hotkey, secondary, shot, false).0;
+        self.filled(ready_count, shot);
         id
+    }
+    /// Wait for the asynchronous clipboard read to fill the menu, then capture it.
+    fn filled(&self, ready_count: usize, shot: &str) {
+        wait("asynchronous menu metadata", || {
+            self.metadata_completions() > ready_count
+        });
+        // Let the filled model paint before capturing.
+        thread::sleep(Duration::from_millis(60));
+        self.shot(shot);
     }
     fn metadata_completions(&self) -> usize {
         fs::read_to_string(self.dir.path().join("daemon.log"))
@@ -167,12 +172,14 @@ impl Harness {
     }
     fn shot(&self, name: &str) {
         let path = self.root.join(format!("docs/screenshots/e2e-{name}.png"));
-        assert!(Command::new(self.bin.join("examples/screenshot"))
-            .env("DISPLAY", &self.display)
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success());
+        // xfwm4 composites redirected windows, so a root GetImage omits the
+        // menu. Capture the menu window itself whenever one is mapped.
+        let mut command = Command::new(self.bin.join("examples/screenshot"));
+        command.env("DISPLAY", &self.display).arg(&path);
+        if let Some(menu) = self.menu() {
+            command.arg(menu.to_string());
+        }
+        assert!(command.status().unwrap().success());
     }
     fn close(&self) {
         self.key(&["Escape"]);
@@ -384,7 +391,9 @@ fn desktop_runtime_matrix() {
     h.restored(&before);
     println!("PASS (b) Word target receives semantic Word HTML");
     let unknown = h.target("unknown-e2e");
-    let (id, first_secondary) = h.open_measured(false, true, "secondary", true);
+    let ready_count = h.metadata_completions();
+    let (id, first_secondary) = h.open_measured(false, true, "secondary", false);
+    h.filled(ready_count, "secondary");
     assert_eq!(
         h.xdo(&["getwindowfocus"]),
         format!("{}\n", fs::read_to_string(unknown.join("window")).unwrap()).as_bytes()
@@ -615,6 +624,7 @@ fn desktop_runtime_matrix() {
     for (name, args) in [
         ("settings", vec!["--settings"]),
         ("preview", vec!["--preview", "menu-secondary"]),
+        ("tray", vec!["--preview", "tray"]),
     ] {
         let child = h.spawn(
             Command::new(h.bin.join("cleancopy-app"))

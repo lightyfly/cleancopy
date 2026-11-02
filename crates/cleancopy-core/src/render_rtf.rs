@@ -23,7 +23,8 @@ pub fn render_rtf(input: &str) -> String {
          {\\s0\\f0\\fs22 Normal;}\
          {\\s1\\styrsid1\\sbasedon0\\snext0\\keepn\\b\\fs36\\outlinelevel0 Heading 1;}\
          {\\s2\\styrsid2\\sbasedon0\\snext0\\keepn\\b\\fs30\\outlinelevel1 Heading 2;}\
-         {\\s3\\styrsid3\\sbasedon0\\snext0\\keepn\\b\\fs26\\outlinelevel2 Heading 3;}}\n",
+         {\\s3\\styrsid3\\sbasedon0\\snext0\\keepn\\b\\fs26\\outlinelevel2 Heading 3;}\
+         {\\s15\\sbasedon0\\snext0\\keepn\\b\\fs52 Title;}}\n",
     );
     let lists: Vec<_> = root
         .descendants()
@@ -94,7 +95,8 @@ pub fn render_rtf(input: &str) -> String {
         out.push_str("}\n");
     }
     out.push_str("\\viewkind4\\paperw12240\\paperh15840\\margl1440\\margr1440\n");
-    let mut renderer = Renderer { out, ids };
+    let title = parse::title_heading(root).map(|n| n as *const AstNode<'_> as usize);
+    let mut renderer = Renderer { out, ids, title };
     renderer.block(root, Context::default());
     renderer.out.push_str("}\n");
     renderer.out
@@ -118,6 +120,8 @@ struct Context {
 struct Renderer {
     out: String,
     ids: HashMap<usize, usize>,
+    /// The single leading H1, rendered with Word's Title style.
+    title: Option<usize>,
 }
 
 impl Renderer {
@@ -167,6 +171,11 @@ impl Renderer {
         match &node.data.borrow().value {
             NodeValue::Paragraph | NodeValue::Heading(_) => {
                 let style = match &node.data.borrow().value {
+                    NodeValue::Heading(_)
+                        if self.title == Some(node as *const AstNode<'_> as usize) =>
+                    {
+                        "\\s15\\b\\fs52\\keepn"
+                    }
                     NodeValue::Heading(h) => match h.level {
                         1 => "\\s1\\b\\fs36\\keepn\\outlinelevel0",
                         2 => "\\s2\\b\\fs30\\keepn\\outlinelevel1",

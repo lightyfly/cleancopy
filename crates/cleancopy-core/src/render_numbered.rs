@@ -26,7 +26,12 @@ pub enum NumberingStyle {
 pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
     let arena = Arena::new();
     let root = parse::parse(&arena, markdown);
+    // A single leading H1 is the unnumbered document title and H2 becomes the
+    // first numbered level; with several H1s (or one that is not first) H1 is
+    // numbered. A document without any H1 numbers from H2 like the title case.
+    let offset = usize::from(parse::title_heading(root).is_some() || parse::has_no_h1(root));
     let mut renderer = Renderer {
+        offset,
         style,
         headings: vec![],
         heading_level: 0,
@@ -36,6 +41,8 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
 }
 
 struct Renderer {
+    /// 1 when H1 is the document title (or absent), else 0.
+    offset: usize,
     style: NumberingStyle,
     headings: Vec<usize>,
     heading_level: usize,
@@ -87,13 +94,15 @@ impl Renderer {
                     // Decimal: H1 is the unnumbered document title.
                     usize::from(h.level).saturating_sub(1)
                 } else {
-                    // Chinese styles number H1–H3 only (design.md §7.1);
-                    // H4–H6 stay standalone, unnumbered paragraphs and do not
-                    // change the outline, so their lists follow the H1–H3 chain.
-                    if h.level > 3 {
+                    // Chinese styles number three heading levels below the
+                    // title (design.md §7.1); deeper headings stay standalone,
+                    // unnumbered paragraphs and do not change the outline, so
+                    // their lists follow the numbered chain.
+                    let level = usize::from(h.level).saturating_sub(self.offset);
+                    if level > 3 {
                         return inline(node);
                     }
-                    usize::from(h.level)
+                    level
                 };
                 self.heading_level = level;
                 if level == 0 {

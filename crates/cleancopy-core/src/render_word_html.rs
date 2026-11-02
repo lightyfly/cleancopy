@@ -24,6 +24,27 @@ pub fn render_word_html(input: &str) -> String {
             ),
         );
     }
+    // A single leading H1 is the document title: Word's built-in "Title"
+    // style instead of Heading 1 (design.md §7.1).
+    let body = html
+        .split_once("<body>")
+        .map_or("", |(_, b)| b)
+        .trim_start();
+    if body.starts_with("<h1 ") && html.matches("<h1 ").count() == 1 {
+        styles.push_str(
+            "p.MsoTitle {mso-style-name:Title;mso-outline-level:body;font-size:26pt;font-weight:bold;}\n",
+        );
+        if let (Some(start), Some(end)) = (html.find("<h1 "), html.find("</h1>")) {
+            let open_end = start + html[start..].find('>').unwrap_or(0) + 1;
+            let inner = html[open_end..end].to_owned();
+            html.replace_range(
+                start..end + "</h1>".len(),
+                &format!(
+                    "<p class=\"MsoTitle\" style=\"mso-style-name:Title;font-size:26pt;font-weight:bold\"><b>{inner}</b></p>"
+                ),
+            );
+        }
+    }
     styles.push_str("</style>\n</head>\n");
     html.replacen("<html><body>", &format!("<html>{styles}<body>"), 1)
 }

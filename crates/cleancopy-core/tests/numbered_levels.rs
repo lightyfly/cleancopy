@@ -1,7 +1,8 @@
 //! Property test (report v4 M-1): across random outlines of H1–H6 headings,
 //! paragraphs and nested lists, no outline level ever uses the same numbering
-//! form as the level directly above it, and H4–H6 are never numbered in the
-//! Chinese styles.
+//! form as the level directly above it, and in the Chinese styles only three
+//! heading levels are numbered: H2–H4 under a single leading H1 title (or
+//! with no H1), H1–H3 when there are several H1s (design.md §7.1).
 
 use cleancopy_core::{render_numbered, NumberingStyle};
 use proptest::prelude::*;
@@ -90,17 +91,29 @@ fn check(blocks: &[Block], style: NumberingStyle) -> Result<(), TestCaseError> {
     // (outline level, is heading H4+, kind) per rendered line.
     let mut expected: Vec<(Option<usize>, bool, bool)> = Vec::new();
     let mut deepest = 0usize; // deepest numbered heading level in the chain
+    let h1s = blocks
+        .iter()
+        .filter(|b| matches!(b, Block::Heading(1)))
+        .count();
+    let title = h1s == 1 && matches!(blocks.first(), Some(Block::Heading(1)));
+    let offset = usize::from(title || h1s == 0);
     for b in blocks {
         match b {
             Block::Heading(h) => {
                 md.push_str(&format!("{} h\n\n", "#".repeat(usize::from(*h))));
                 let level = match style {
                     NumberingStyle::Decimal => usize::from(*h) - 1,
-                    _ if *h > 3 => {
+                    _ if usize::from(*h) - offset > 3 => {
                         expected.push((None, true, true));
                         continue;
                     }
-                    _ => usize::from(*h),
+                    _ if usize::from(*h) == offset => {
+                        // The document title: unnumbered, resets the chain.
+                        deepest = 0;
+                        expected.push((None, true, true));
+                        continue;
+                    }
+                    _ => usize::from(*h) - offset,
                 };
                 deepest = level;
                 expected.push(((level > 0).then_some(level), false, true));
@@ -125,7 +138,13 @@ fn check(blocks: &[Block], style: NumberingStyle) -> Result<(), TestCaseError> {
     for (line, (level, deep_heading, heading)) in lines.iter().zip(&expected) {
         let f = form(line);
         if *deep_heading {
-            prop_assert_eq!(f, Form::None, "H4+ numbered: {:?}\n{}", line, out);
+            prop_assert_eq!(
+                f,
+                Form::None,
+                "deep heading or title numbered: {:?}\n{}",
+                line,
+                out
+            );
             continue;
         }
         let Some(k) = *level else { continue };
@@ -186,7 +205,7 @@ fn report_v4_numbering_sample_has_no_repeats() {
     let out = render_numbered(md, NumberingStyle::Chinese);
     assert_eq!(
         out,
-        "一、文档标题\n1. 顶层A\n\n（一）第一章\n1. 甲\n    （1）乙1\n\n1. 小节一\n（1）步骤一\n（2）步骤二\n\n细则一\n（1）细项\n    ①细子项\n\n子则\n（1）深项\n\n2. 小节二\n（1）列表后紧跟小标题\n\n紧跟的四级\n（1）四级下列表"
+        "文档标题\n1. 顶层A\n\n一、第一章\n1. 甲\n    （1）乙1\n\n（一）小节一\n1. 步骤一\n2. 步骤二\n\n1. 细则一\n（1）细项\n    ①细子项\n\n子则\n（1）深项\n\n（二）小节二\n1. 列表后紧跟小标题\n\n1. 紧跟的四级\n（1）四级下列表"
     );
     let compact = render_numbered(md, NumberingStyle::ChineseCompact);
     assert!(!compact.contains("1.1.1"), "{compact}");

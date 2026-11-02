@@ -749,7 +749,7 @@ fn silent_numbered_rule_renders_expected_chinese_and_restores_all_formats() {
     assert!(e.platform().menus.is_empty());
     assert_eq!(
         e.platform().pasted,
-        vec![Snapshot::text("一、项目周报\n\n（一）本周进展\n1. 完成")]
+        vec![Snapshot::text("项目周报\n\n一、本周进展\n1. 完成")]
     );
     assert_eq!(e.next_deadline(), Some(150));
     timer(&mut e, 149);
@@ -799,10 +799,7 @@ fn numeric_choices_one_through_five_restore_exact_original() {
         let pasted = &e.platform().pasted[0];
         match digit {
             1 => assert_eq!(pasted, &original),
-            2 => assert_eq!(
-                pasted,
-                &Snapshot::text("一、Title\n\n（一）Heading\n\nbold")
-            ),
+            2 => assert_eq!(pasted, &Snapshot::text("Title\n\n一、Heading\n\nbold")),
             3 => {
                 assert!(pasted.formats[TEXT_HTML]
                     .windows(11)

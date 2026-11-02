@@ -40,7 +40,8 @@ fn complete_ascii_document_even_when_empty() {
 #[test]
 fn built_in_heading_styles_and_scoped_inline_formatting() {
     let rtf = render_rtf(
-        "# First\n\n## Second\n\n### Third\n\n#### Fourth\n\n**bold *nested*** normal ~~gone~~",
+        // Leading text keeps the H1 from being the document title.
+        "intro\n\n# First\n\n## Second\n\n### Third\n\n#### Fourth\n\n**bold *nested*** normal ~~gone~~",
     );
     for (style, level, name) in [
         (1, 0, "Heading 1"),
@@ -171,4 +172,15 @@ fn deep_lists_are_retained_and_clamped_to_rtf_limit() {
         assert!(rtf.contains(&format!(" item{i}\\par}}")));
     }
     balanced(&rtf);
+}
+
+#[test]
+fn single_leading_h1_uses_word_title_style_and_several_h1s_do_not() {
+    let rtf = render_rtf("# Doc\n\n## Part\n");
+    assert!(rtf.contains("{\\s15\\sbasedon0\\snext0\\keepn\\b\\fs52 Title;}"));
+    assert!(rtf.contains("\\s15\\b\\fs52\\keepn Doc\\par}"), "{rtf}");
+    assert!(rtf.contains("\\s2\\b\\fs30"));
+    let rtf = render_rtf("# One\n\n# Two\n");
+    assert!(!rtf.contains("\\s15\\b"), "{rtf}");
+    assert_eq!(rtf.matches("\\s1\\b\\fs36").count(), 2);
 }

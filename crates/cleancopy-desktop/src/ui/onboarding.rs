@@ -627,7 +627,7 @@ mod tests {
         let mut state = OnboardingState::default();
         state.try_paste(&Config::default());
         assert!(state.tried);
-        assert!(state.input.contains("（一）本周进展"), "{}", state.input);
+        assert!(state.input.contains("一、本周进展"), "{}", state.input);
         assert!(!state.input.contains("**"));
     }
 

@@ -9,7 +9,11 @@ fn word_headings_have_semantics_builtin_styles_and_outline_levels() {
     assert!(html.starts_with("<html><head>\n<style>\n"));
     assert!(html.ends_with("</body></html>\n"));
     assert!(html.contains("</style>\n</head>\n<body>"));
-    for level in 1..=6 {
+    // A single leading H1 is the document title (Word "Title" style).
+    assert!(html.contains("<p class=\"MsoTitle\" style=\"mso-style-name:Title;"));
+    assert!(html.contains("><b>Heading 1</b></p>"));
+    assert!(!html.contains("<h1 "));
+    for level in 2..=6 {
         assert!(html.contains(&format!("<h{level} class=\"MsoHeading{level}\"")));
         assert!(html.contains(&format!(
             "style=\"mso-style-name:'Heading {level}';mso-outline-level:{level};"
@@ -20,9 +24,20 @@ fn word_headings_have_semantics_builtin_styles_and_outline_levels() {
 }
 
 #[test]
+fn several_h1s_stay_heading_1_without_a_title() {
+    let html = render_word_html("# One\n\n## Sub\n\n# Two\n");
+    assert!(!html.contains("MsoTitle"));
+    assert_eq!(html.matches("<h1 class=\"MsoHeading1\"").count(), 2);
+    // One H1 that is not the first block is not a title either.
+    let html = render_word_html("intro\n\n# Late\n");
+    assert!(!html.contains("MsoTitle"));
+    assert!(html.contains("<h1 class=\"MsoHeading1\""));
+}
+
+#[test]
 fn setext_headings_and_heading_inline_formatting_survive() {
     let html = render_word_html("**Title** & `code`\n===\n\n*Subtitle*\n---");
-    assert!(html.contains("<h1 class=\"MsoHeading1\""));
+    assert!(html.contains("<p class=\"MsoTitle\""));
     assert!(html.contains("<strong>Title</strong> &amp; <code style="));
     assert!(html.contains("<h2 class=\"MsoHeading2\""));
     assert!(html.contains("<em>Subtitle</em></h2>"));
@@ -59,7 +74,8 @@ fn word_html_keeps_untrusted_content_inert() {
     assert!(html.contains("&lt;h1&gt;literal&lt;/h1&gt;"));
     assert!(html.contains("href=\"\""));
     assert!(html.contains("src=\"\""));
-    assert_eq!(html.matches("class=\"MsoHeading").count(), 1);
+    assert_eq!(html.matches("class=\"MsoHeading").count(), 0);
+    assert_eq!(html.matches("class=\"MsoTitle\"").count(), 1);
 }
 
 #[test]
@@ -67,7 +83,7 @@ fn word_html_handles_empty_unicode_and_crlf() {
     let empty = render_word_html("");
     assert!(empty.contains("<body>\n</body>"));
     let html = render_word_html("# 中文 & café\r\n\r\n正文\r\n");
-    assert!(html.contains(">中文 &amp; café</h1>"));
+    assert!(html.contains(">中文 &amp; café</b></p>"));
     assert!(!html.contains('\r'));
     assert!(!html.contains("<!--StartFragment-->"));
 }

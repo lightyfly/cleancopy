@@ -7,7 +7,7 @@
 /// clipboard consumers can preserve document structure as well as appearance.
 /// All content rendering and sanitization is delegated to [`crate::render_html`].
 pub fn render_word_html(input: &str) -> String {
-    let mut html = crate::render_html(input);
+    let mut html = crate::render_html::render_html_with(input, true);
     let mut styles = String::from("<head>\n<style>\n");
     for (level, size) in [(1, 24), (2, 18), (3, 14), (4, 12), (5, 10), (6, 8)] {
         // Word uses one-based outline levels in its HTML dialect (unlike the

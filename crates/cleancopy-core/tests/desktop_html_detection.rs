@@ -33,12 +33,16 @@ fn word_rendering_preserves_base_body_for_non_heading_content() {
     let input = "**bold** *italic* ~~removed~~\n\n7. seven\n8. eight\n\n- [ ] todo\n- [x] done\n\n> quoted\n\n| a | b |\n| :--- | ---: |\n| x | y |\n\n`inline`\n\n```rust\nlet x = 1;\n```\n\n[link](https://example.com)";
     let original = render_html(input);
     let word = render_word_html(input);
+    // Word output differs only by explicit list types (Word/WPS list import).
+    let normalized = word
+        .replace(" style=\"list-style-type:decimal\"", "")
+        .replace(" style=\"list-style-type:disc\"", "");
     assert_eq!(
         original.split_once("<body>").unwrap().1,
-        word.split_once("<body>").unwrap().1
+        normalized.split_once("<body>").unwrap().1
     );
     assert!(word.contains("font-family:monospace;background-color:#f5f5f5"));
-    assert!(word.contains("<ol start=\"7\">"));
+    assert!(word.contains("<ol style=\"list-style-type:decimal\" start=\"7\">"));
     assert!(word.contains("<li>☑ done</li>"));
     assert!(word.contains("<table border=\"1\""));
 }

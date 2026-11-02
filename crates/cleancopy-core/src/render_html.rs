@@ -10,8 +10,17 @@ const CODE_STYLE: &str = "font-family:monospace;background-color:#f5f5f5";
 /// and fragment markers belong to the clipboard layer, not this renderer.
 /// The output uses LF line endings on every platform.
 pub fn render_html(input: &str) -> String {
+    render_html_with(input, false)
+}
+
+/// `word_lists` rewrites lists for Word and WPS: no `<p>` directly inside
+/// `<li>` (extra paragraphs become `<br>`), nested lists stay inside their
+/// parent `<li>`, empty items are dropped, and every list has an explicit
+/// `list-style-type` so nested bullets are never renumbered.
+pub(crate) fn render_html_with(input: &str, word_lists: bool) -> String {
     let arena = Arena::new();
     let root = parse::parse(&arena, input);
+
     // Language metadata is not needed without highlighting. Clearing it also
     // avoids comrak's special treatment of ```math and language CSS classes.
     for node in root.descendants() {
@@ -54,5 +63,99 @@ pub fn render_html(input: &str) -> String {
     for class in ["footnotes", "footnote-ref", "footnote-backref"] {
         html = html.replace(&format!(" class=\"{class}\""), "");
     }
+    if word_lists {
+        html = word_compatible_lists(&html);
+    }
     format!("<html><body>\n{html}</body></html>\n")
+}
+
+/// Rewrite comrak's list markup for Word/WPS. Comrak escapes raw HTML, so
+/// every `<` in its output starts one of its own tags.
+fn word_compatible_lists(html: &str) -> String {
+    #[derive(PartialEq)]
+    enum Open {
+        Li { paragraphs: usize },
+        List,
+        Other,
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut stack: Vec<Open> = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        let end = rest[start..]
+            .find('>')
+            .map_or(rest.len(), |e| start + e + 1);
+        let tag = &rest[start..end];
+        rest = &rest[end..];
+        let name: String = tag
+            .trim_start_matches(['<', '/'])
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        let closing = tag.starts_with("</");
+        let self_closing =
+            tag.ends_with("/>") || matches!(name.as_str(), "br" | "hr" | "img" | "input");
+        let direct_in_li = matches!(stack.last(), Some(Open::Li { .. }));
+        match (name.as_str(), closing) {
+            ("p", false) if direct_in_li => {
+                if let Some(Open::Li { paragraphs }) = stack.last_mut() {
+                    if *paragraphs > 0 {
+                        out.push_str("<br>");
+                    }
+                    *paragraphs += 1;
+                }
+                // Swallow the newline comrak emits after the tag, if any.
+                continue;
+            }
+            ("p", true) if direct_in_li => {
+                rest = rest.strip_prefix('\n').unwrap_or(rest);
+                continue;
+            }
+            ("li", false) => {
+                stack.push(Open::Li { paragraphs: 0 });
+                out.push_str(tag);
+                if rest.starts_with("\n<p>") {
+                    rest = &rest[1..];
+                }
+            }
+            ("ul", false) => {
+                let depth = stack.iter().filter(|o| **o == Open::List).count();
+                let kind = ["disc", "circle", "square"][depth % 3];
+                stack.push(Open::List);
+                out.push_str(&tag.replacen(
+                    "<ul",
+                    &format!("<ul style=\"list-style-type:{kind}\""),
+                    1,
+                ));
+            }
+            ("ol", false) => {
+                stack.push(Open::List);
+                out.push_str(&tag.replacen("<ol", "<ol style=\"list-style-type:decimal\"", 1));
+            }
+            (_, true) => {
+                stack.pop();
+                out.push_str(tag);
+            }
+            _ => {
+                if !self_closing {
+                    stack.push(Open::Other);
+                }
+                out.push_str(tag);
+            }
+        }
+    }
+    out.push_str(rest);
+    // Drop empty items (WPS renders them as bare numbers).
+    loop {
+        let before = out.len();
+        out = out
+            .replace("<li></li>\n", "")
+            .replace("<li>\n</li>\n", "")
+            .replace("<li></li>", "");
+        if out.len() == before {
+            break;
+        }
+    }
+    out
 }

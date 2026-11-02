@@ -465,7 +465,7 @@ impl Platform for LinuxPlatform {
     fn write_clipboard(&mut self, snapshot: Snapshot) -> Result<()> {
         let native = decode_snapshot(&snapshot)?;
         self.clipboard.write_snapshot(&native).map_err(err)?;
-        let logical = (encode_snapshot(&native) != snapshot).then_some(snapshot);
+        let logical = (!encodes_to(&native, &snapshot)).then_some(snapshot);
         self.last_write = Some((fingerprint(&native), logical));
         Ok(())
     }
@@ -899,19 +899,40 @@ fn fingerprint(native: &NativeSnapshot) -> u64 {
     hasher.finish()
 }
 
-fn encode_snapshot(native: &NativeSnapshot) -> Snapshot {
-    let mut result = Snapshot::default();
-    for target in &native.targets {
-        result.formats.insert(
-            format!(
+/// `encode_snapshot(native) == snapshot` without building a copy.
+fn encodes_to(native: &NativeSnapshot, snapshot: &Snapshot) -> bool {
+    let native_keys = snapshot
+        .formats
+        .keys()
+        .filter(|k| k.starts_with(NATIVE))
+        .count();
+    native_keys == native.targets.len()
+        && native.targets.iter().all(|target| {
+            let key = format!(
                 "{NATIVE}{}:{}:{}",
                 target.format,
                 hex(&target.target),
                 hex(&target.type_name)
-            ),
-            target.data.clone(),
-        );
-    }
+            );
+            snapshot.formats.get(&key) == Some(&target.data)
+        })
+        && {
+            // Aliases are cheap to rebuild: they only reference target data.
+            let aliases = encode_aliases(native);
+            let others: Vec<_> = snapshot
+                .formats
+                .iter()
+                .filter(|(k, _)| !k.starts_with(NATIVE))
+                .collect();
+            others.len() == aliases.len()
+                && others
+                    .iter()
+                    .all(|(k, v)| aliases.iter().any(|(a, d)| a == *k && *d == v.as_slice()))
+        }
+}
+
+fn encode_aliases(native: &NativeSnapshot) -> Vec<(String, &[u8])> {
+    let mut out = Vec::new();
     for alias in ["text/markdown", "text/plain", "text/html", "text/rtf"] {
         let target = native
             .targets
@@ -930,8 +951,27 @@ fn encode_snapshot(native: &NativeSnapshot) -> Snapshot {
                     .flatten()
             });
         if let Some(target) = target.filter(|t| t.format == 8) {
-            result.formats.insert(alias.into(), target.data.clone());
+            out.push((alias.to_owned(), target.data.as_slice()));
         }
+    }
+    out
+}
+
+fn encode_snapshot(native: &NativeSnapshot) -> Snapshot {
+    let mut result = Snapshot::default();
+    for target in &native.targets {
+        result.formats.insert(
+            format!(
+                "{NATIVE}{}:{}:{}",
+                target.format,
+                hex(&target.target),
+                hex(&target.type_name)
+            ),
+            target.data.clone(),
+        );
+    }
+    for (alias, data) in encode_aliases(native) {
+        result.formats.insert(alias, data.to_vec());
     }
     result
 }

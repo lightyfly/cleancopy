@@ -31,7 +31,7 @@ pub const TEXT_HTML: &str = "text/html";
 pub const TEXT_RTF: &str = "text/rtf";
 
 /// Exact native bytes, including opaque formats; equality compares all formats.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Snapshot {
     pub formats: BTreeMap<String, Vec<u8>>,
 }
@@ -246,9 +246,18 @@ impl Drop for Conversion {
 }
 struct Restoration {
     original: Snapshot,
-    written: Snapshot,
+    /// Fingerprint of what we wrote: a converted Word/WPS snapshot can be
+    /// ~100 MB, so keeping a second copy here doubled peak memory (report v6).
+    written: u64,
     deadline: u64,
 }
+fn fingerprint(snapshot: &Snapshot) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    snapshot.hash(&mut hasher);
+    hasher.finish()
+}
+
 struct Undo {
     app: AppIdentity,
     original: SharedSnapshot,
@@ -758,10 +767,11 @@ impl<P: Platform> Engine<P> {
             if self.secure_blocked()? {
                 return Ok(());
             }
-            self.platform.write_clipboard(written.clone())?;
+            let fingerprint = fingerprint(&written);
+            self.platform.write_clipboard(written)?;
             self.restoring = Some(Restoration {
                 original: capture.original.clone(),
-                written,
+                written: fingerprint,
                 deadline: t.saturating_add(RESTORE_DELAY_MS),
             });
         }
@@ -876,7 +886,7 @@ impl<P: Platform> Engine<P> {
         // Advance before fallible effects, avoiding a busy-loop on a past deadline.
         let restoration = self.restoring.as_mut().unwrap();
         restoration.deadline = t.saturating_add(RESTORE_DELAY_MS);
-        if self.platform.read_clipboard()? != restoration.written {
+        if fingerprint(&self.platform.read_clipboard()?) != restoration.written {
             self.platform
                 .notify("Clipboard restoration skipped: a newer clipboard was copied")?;
             self.restoring = None;
@@ -903,10 +913,11 @@ impl<P: Platform> Engine<P> {
             return Ok(());
         }
         let original = last.original.to_snapshot();
-        self.platform.write_clipboard(original.clone())?;
+        let written = fingerprint(&original);
+        self.platform.write_clipboard(original)?;
         self.restoring = Some(Restoration {
             original: current,
-            written: original,
+            written,
             deadline: t.saturating_add(RESTORE_DELAY_MS),
         });
         if !self.target(&app)? {

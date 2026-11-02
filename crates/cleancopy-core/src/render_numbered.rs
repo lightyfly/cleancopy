@@ -5,7 +5,9 @@ use comrak::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Numbering patterns below the unnumbered H1 document title.
+/// Heading numbering patterns. Chinese styles number H1–H3 only
+/// (`一、 （一） 1.` / compact `一、 1. （1）`); Decimal numbers H2+ below an
+/// unnumbered H1 title (`1. 1.1 1.1.1`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumberingStyle {
@@ -81,12 +83,23 @@ impl Renderer {
         match &node.data.borrow().value {
             NodeValue::Heading(h) => {
                 self.next_list = 1;
-                self.heading_level = usize::from(h.level).saturating_sub(1);
-                if self.heading_level == 0 {
+                let level = if self.style == NumberingStyle::Decimal {
+                    // Decimal: H1 is the unnumbered document title.
+                    usize::from(h.level).saturating_sub(1)
+                } else {
+                    // Chinese styles number H1–H3 only (design.md §7.1);
+                    // H4–H6 stay standalone, unnumbered paragraphs and do not
+                    // change the outline, so their lists follow the H1–H3 chain.
+                    if h.level > 3 {
+                        return inline(node);
+                    }
+                    usize::from(h.level)
+                };
+                self.heading_level = level;
+                if level == 0 {
                     self.headings.clear();
                     return inline(node);
                 }
-                let level = self.heading_level;
                 self.headings.truncate(level);
                 self.headings.resize(level, 0);
                 for count in &mut self.headings[..level - 1] {
@@ -209,18 +222,16 @@ fn list_marker(rung: usize, n: usize) -> String {
 /// Which list-ladder rung (if any) a heading level's marker occupies.
 fn heading_rung(style: NumberingStyle, level: usize) -> Option<usize> {
     let rung = match (style, level) {
+        // 一、 / （一） are heading-only; H3 `1.` pushes lists to （1）.
         (NumberingStyle::Chinese, 1 | 2) => return None,
-        (NumberingStyle::Chinese, 3) => 0,
-        (NumberingStyle::Chinese, 4) => 1,
-        (NumberingStyle::Chinese, 5) => 2,
-        (NumberingStyle::Chinese, 6) => 3,
+        (NumberingStyle::Chinese, _) => 0,
+        // Compact: 一、 / 1. / （1）.
         (NumberingStyle::ChineseCompact, 1) => return None,
         (NumberingStyle::ChineseCompact, 2) => 0,
-        (NumberingStyle::ChineseCompact, 3) => 1,
+        (NumberingStyle::ChineseCompact, _) => 1,
         // Decimal headings (1. / 1.1 / …) and anything deeper all read as
         // the `1.` family.
         (NumberingStyle::Decimal, _) => 0,
-        _ => 0,
     };
     Some(rung.min(LIST_LADDER - 1))
 }
@@ -241,12 +252,8 @@ fn marker(style: NumberingStyle, path: &[usize]) -> String {
             format!("{}、", chinese(n))
         }
         (NumberingStyle::Chinese, 2) => format!("（{}）", chinese(n)),
-        (NumberingStyle::Chinese, 3) | (NumberingStyle::ChineseCompact, 2) => format!("{n}. "),
-        (NumberingStyle::Chinese, 4) => format!("（{n}）"),
-        (NumberingStyle::Chinese, 5) if n <= 50 => circled(n),
-        (NumberingStyle::Chinese, 5) => format!("（{n}）"),
-        (NumberingStyle::Chinese, 6) => format!("{}. ", alphabetic(n)),
-        (NumberingStyle::ChineseCompact, 3) => format!("({n}) "),
+        (NumberingStyle::Chinese, _) | (NumberingStyle::ChineseCompact, 2) => format!("{n}. "),
+        (NumberingStyle::ChineseCompact, _) => format!("（{n}）"),
         _ => {
             let path = path
                 .iter()

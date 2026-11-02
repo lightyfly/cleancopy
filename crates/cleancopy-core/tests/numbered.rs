@@ -4,7 +4,7 @@ const SAMPLE: &str = "# 项目周报\n## 本周进展\n- 完成 **剪贴板监�
 
 #[test]
 fn exact_settings_preview_and_newline_contract() {
-    assert_eq!(render_numbered(SAMPLE, NumberingStyle::default()), "项目周报\n\n一、本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    （1）标题映射 标题1/2\n    （2）表格与代码块\n\n二、下周计划\n1. Windows 托盘\n2. 识别失败兜底");
+    assert_eq!(render_numbered(SAMPLE, NumberingStyle::default()), "一、项目周报\n\n（一）本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    （1）标题映射 标题1/2\n    （2）表格与代码块\n\n（二）下周计划\n1. Windows 托盘\n2. 识别失败兜底");
     for input in ["", " \n\t", "<!-- comment -->"] {
         assert_eq!(render_numbered(input, NumberingStyle::Chinese), "");
     }
@@ -15,14 +15,17 @@ fn exact_settings_preview_and_newline_contract() {
 
 #[test]
 fn alternative_settings_previews() {
-    assert_eq!(render_numbered(SAMPLE, NumberingStyle::ChineseCompact), "项目周报\n\n一、本周进展\n1. 完成 剪贴板监听\n2. 接入 Word 富文本\n    （1）标题映射 标题1/2\n    （2）表格与代码块\n\n二、下周计划\n1. Windows 托盘\n2. 识别失败兜底");
+    assert_eq!(render_numbered(SAMPLE, NumberingStyle::ChineseCompact), "一、项目周报\n\n1. 本周进展\n（1）完成 剪贴板监听\n（2）接入 Word 富文本\n    ①标题映射 标题1/2\n    ②表格与代码块\n\n2. 下周计划\n（1）Windows 托盘\n（2）识别失败兜底");
     assert_eq!(render_numbered(SAMPLE, NumberingStyle::Decimal), "项目周报\n\n1. 本周进展\n（1）完成 剪贴板监听\n（2）接入 Word 富文本\n    ①标题映射 标题1/2\n    ②表格与代码块\n\n2. 下周计划\n（1）Windows 托盘\n（2）识别失败兜底");
 }
 
 #[test]
 fn headings_reset_descendants_and_titles_reset_document() {
     let input = "# T\n## A\n### B\n### C\n#### D\n##### E\n###### F\n## G\n### H\n# U\n## I";
-    assert_eq!(render_numbered(input, NumberingStyle::Chinese), "T\n\n一、A\n\n（一）B\n\n（二）C\n\n1. D\n\n（1）E\n\n①F\n\n二、G\n\n（一）H\n\nU\n\n一、I");
+    assert_eq!(
+        render_numbered(input, NumberingStyle::Chinese),
+        "一、T\n\n（一）A\n\n1. B\n\n2. C\n\nD\n\nE\n\nF\n\n（二）G\n\n1. H\n\n二、U\n\n（一）I"
+    );
     assert_eq!(
         render_numbered("### A\n#### B\n## C\n### D", NumberingStyle::Decimal),
         "1.1 A\n\n1.1.1 B\n\n2. C\n\n2.1 D"
@@ -50,18 +53,20 @@ fn lists_start_below_the_nearest_heading_scheme() {
     for (heading, expected) in [
         ("# T", "1. item"),
         ("## T", "1. item"),
-        ("### T", "1. item"),
-        ("#### T", "（1）item"),
-        ("##### T", "①item"),
-        ("###### T", "a. item"),
+        ("### T", "（1）item"),
+        // H4–H6 are unnumbered; their lists follow the H1–H3 chain.
+        ("#### T", "1. item"),
+        ("### S\n#### T", "（1）item"),
+        ("### S\n###### T", "（1）item"),
     ] {
         let out = render_numbered(&format!("{heading}\n- item"), NumberingStyle::Chinese);
         assert!(out.ends_with(expected), "{heading}: {out}");
     }
     for (style, heading, expected) in [
-        (NumberingStyle::ChineseCompact, "## T", "1. item"),
-        (NumberingStyle::ChineseCompact, "### T", "（1）item"),
-        (NumberingStyle::ChineseCompact, "#### T", "①item"),
+        (NumberingStyle::ChineseCompact, "# T", "1. item"),
+        (NumberingStyle::ChineseCompact, "## T", "（1）item"),
+        (NumberingStyle::ChineseCompact, "### T", "①item"),
+        (NumberingStyle::ChineseCompact, "### S\n#### T", "①item"),
         (NumberingStyle::Decimal, "## T", "（1）item"),
         (NumberingStyle::Decimal, "### T", "（1）item"),
     ] {
@@ -77,7 +82,7 @@ fn lists_never_count_toward_heading_numbering_or_repeat_a_scheme() {
     let out = render_numbered(input, NumberingStyle::Chinese);
     assert_eq!(
         out,
-        "一、甲组\n1. 甲\n2. 乙\n\n（一）小节A\n1. 一\n    （1）二\n\n（二）小节B"
+        "（一）甲组\n1. 甲\n2. 乙\n\n1. 小节A\n（1）一\n    ①二\n\n2. 小节B"
     );
     let decimal = render_numbered(input, NumberingStyle::Decimal);
     assert_eq!(
@@ -161,20 +166,20 @@ fn stripping_markup_preserves_original_inline_spaces() {
 }
 
 #[test]
-fn chinese_fifth_and_sixth_levels_have_named_markers() {
+fn chinese_h4_to_h6_are_unnumbered_standalone_paragraphs() {
     assert_eq!(
         render_numbered(
             "###### Section\n- one\n- two\n- three\n###### A\n###### B\n###### C",
             NumberingStyle::Chinese
         ),
-        "①Section\na. one\nb. two\nc. three\n\n②A\n\n③B\n\n④C"
+        "Section\n1. one\n2. two\n3. three\n\nA\n\nB\n\nC"
     );
     assert_eq!(
         render_numbered(
-            "#### Section\n- one\n  - alpha\n  - beta\n  - gamma\n- two\n- three",
+            "### Sub\n#### Section\n- one\n  - alpha\n  - beta\n  - gamma\n- two\n- three",
             NumberingStyle::Chinese
         ),
-        "1. Section\n（1）one\n    ①alpha\n    ②beta\n    ③gamma\n（2）two\n（3）three"
+        "1. Sub\n\nSection\n（1）one\n    ①alpha\n    ②beta\n    ③gamma\n（2）two\n（3）three"
     );
 }
 

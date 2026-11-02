@@ -258,7 +258,7 @@ impl SettingsState {
             "numbering_style",
             &[
                 (NumberingStyle::Chinese, "一、（一）1.（1）"),
-                (NumberingStyle::ChineseCompact, "一、1. (1)"),
+                (NumberingStyle::ChineseCompact, "一、1.（1）"),
                 (NumberingStyle::Decimal, "1. 1.1 1.1.1"),
             ],
             &mut config.numbering_style,

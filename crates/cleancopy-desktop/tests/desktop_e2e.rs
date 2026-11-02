@@ -386,7 +386,7 @@ fn desktop_runtime_matrix() {
     });
     // H1 is an unnumbered document title; H2 starts Chinese section numbering.
     let source = b"# Title\r\n\r\n## Heading\r\n\r\n**bold**\r\n";
-    let numbered = "Title\n\n一、Heading\n\nbold".as_bytes();
+    let numbered = "一、Title\n\n（一）Heading\n\nbold".as_bytes();
     h.fixture(source, "fixture");
     let before = h.snapshot();
     let gedit = h.target("gedit");
@@ -519,7 +519,7 @@ fn desktop_runtime_matrix() {
     );
     assert_eq!(
         output,
-        format!("一、Heading\n\n{}", "x".repeat(9987)).as_bytes()
+        format!("（一）Heading\n\n{}", "x".repeat(9987)).as_bytes()
     );
     h.restored(&large_before);
     // HTML-only web clipboard: no UTF8_STRING/plain/Markdown representation.
@@ -555,7 +555,7 @@ fn desktop_runtime_matrix() {
     );
     h.key(&["ctrl+shift+v"]);
     let web_output = String::from_utf8(h.paste(&gedit, 3)).unwrap();
-    assert!(web_output.contains("一、Web heading"), "{web_output}");
+    assert!(web_output.contains("（一）Web heading"), "{web_output}");
     assert!(web_output.contains("web bold text"), "{web_output}");
     wait("HTML restored", || {
         let output = Command::new(h.bin.join("examples/target"))

@@ -37,3 +37,8 @@ git-ignored; only this README is committed.
 **macOS and Windows were not built or run here.** See
 [`docs/distribution.md`](../docs/distribution.md) for native-host commands and
 limitations. No artifacts were published, pushed, tagged, or released.
+
+## Rebuild 2026-11-02 10:20 (UTC+8)
+Built from commit 358232c2296f6979b24384b42d8b27a7a90a4080 with `dist build --artifacts=local --target x86_64-unknown-linux-gnu`.
+- cleancopy-cli-x86_64-unknown-linux-gnu.tar.xz: 608d5e3f36165997b37b9d08b75a913f43ea059db664fbb2a31fcf99aa72dcaa
+- cleancopy-desktop-x86_64-unknown-linux-gnu.tar.xz: 116fe9176ca08f8f17016af3952d6f739a13c764b2ebbb49b7306d567f0a2758

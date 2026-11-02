@@ -138,10 +138,22 @@ fn body(crashes: usize, auto_retry: bool) -> String {
 /// Desktop notification over org.freedesktop.Notifications with a
 /// 「重新启动」 action button.
 fn notify(summary: &str, body: &str) -> std::result::Result<u32, String> {
+    desktop_notify(summary, body, 2, &[RESTART_ACTION, "重新启动"], -1)
+}
+
+/// org.freedesktop.Notifications Notify; `urgency` 0 low … 2 critical,
+/// `timeout_ms` -1 for the server default.
+pub fn desktop_notify(
+    summary: &str,
+    body: &str,
+    urgency: u8,
+    actions: &[&str],
+    timeout_ms: i32,
+) -> std::result::Result<u32, String> {
     use std::collections::HashMap;
     let conn = zbus::blocking::Connection::session().map_err(|e| e.to_string())?;
     let hints: HashMap<&str, zbus::zvariant::Value> =
-        HashMap::from([("urgency", zbus::zvariant::Value::U8(2))]);
+        HashMap::from([("urgency", zbus::zvariant::Value::U8(urgency))]);
     let reply = conn
         .call_method(
             Some("org.freedesktop.Notifications"),
@@ -151,12 +163,16 @@ fn notify(summary: &str, body: &str) -> std::result::Result<u32, String> {
             &(
                 "CleanCopy",
                 0u32,
-                "dialog-warning",
+                if urgency >= 2 {
+                    "dialog-warning"
+                } else {
+                    "dialog-information"
+                },
                 summary,
                 body,
-                vec![RESTART_ACTION, "重新启动"],
+                actions.to_vec(),
                 hints,
-                -1i32,
+                timeout_ms,
             ),
         )
         .map_err(|e| e.to_string())?;

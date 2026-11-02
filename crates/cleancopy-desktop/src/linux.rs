@@ -511,6 +511,18 @@ impl Platform for LinuxPlatform {
         self.ungrab_menu()?;
         self.conn.flush().map_err(err)
     }
+    fn toast(&mut self, message: &str) -> Result<()> {
+        eprintln!("CleanCopy toast: {message}");
+        self.notice = Some(message.into());
+        // Low urgency, 3 s: a light notice that never takes focus.
+        let message = message.to_owned();
+        std::thread::spawn(move || {
+            if let Err(error) = safe_mode::desktop_notify("CleanCopy", &message, 0, &[], 3000) {
+                eprintln!("CleanCopy toast: notification failed: {error}");
+            }
+        });
+        Ok(())
+    }
     fn notify(&mut self, message: &str) -> Result<()> {
         eprintln!("CleanCopy: {message}");
         self.notice = Some(message.into());
@@ -1361,6 +1373,7 @@ impl LinuxApp {
                 shortcut: u8::try_from(index + 2).unwrap_or(u8::MAX),
                 enabled: true,
                 muted: false,
+                note: None,
             })
             .collect();
         let model = MenuModel {

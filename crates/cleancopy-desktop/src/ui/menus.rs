@@ -298,12 +298,16 @@ impl MenuState {
                     );
                     for (index, item) in model.formats.iter().enumerate() {
                         let (icon, label) = format_label(item.format);
+                        let label = match item.note {
+                            Some(note) => format!("{label} · {note}"),
+                            None => label.to_owned(),
+                        };
                         let response = row(
                             ui,
                             row_rect(sub, 34.0 + index as f32 * ROW),
                             ("format", model.id, index),
                             icon,
-                            label,
+                            &label,
                             &item.shortcut.to_string(),
                             self.main == 1 && self.format == index,
                             item.enabled && !model.converting,
@@ -966,6 +970,7 @@ mod tests {
                 shortcut: 2,
                 enabled: true,
                 muted: false,
+                note: None,
             }],
             default_choice: Choice::Format(Format::Markdown),
             content_label: "Markdown".into(),

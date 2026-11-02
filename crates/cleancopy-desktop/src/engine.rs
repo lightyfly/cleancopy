@@ -25,6 +25,13 @@ pub const RESTORE_DELAY_MS: u64 = 150;
 pub const BACKGROUND_TEXT_BYTES: usize = 200 * 1024;
 const CONVERSION_POLL_MS: u64 = 16;
 pub const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
+/// Above this, Word/WPS rich text is not offered: its RTF/HTML output is many
+/// times the source size (report v6: 5 MB → ~100 MB RTF, 907 MB peak RSS).
+/// Measured at 2 MiB: 339 MB peak worker RSS (≤ 400 MB target).
+pub const MAX_RICH_BYTES: usize = 2 * 1024 * 1024;
+/// Menu note on the greyed Word/WPS item, and the silent-mode toast.
+pub const RICH_TOO_LARGE_NOTE: &str = "超过 2MB";
+pub const RICH_TOO_LARGE_TOAST: &str = "内容较大，已按纯文本粘贴";
 pub const TEXT_PLAIN: &str = "text/plain";
 pub const TEXT_MARKDOWN: &str = "text/markdown";
 pub const TEXT_HTML: &str = "text/html";
@@ -54,6 +61,11 @@ impl Snapshot {
             .get(TEXT_MARKDOWN)
             .or_else(|| self.formats.get(TEXT_HTML))
             .or_else(|| self.formats.get(TEXT_PLAIN))
+    }
+    /// Whether the content is too large for Word/WPS rich text.
+    pub fn too_large_for_rich(&self) -> bool {
+        self.source_bytes()
+            .is_some_and(|bytes| bytes.len() > MAX_RICH_BYTES)
     }
     fn html_source(&self) -> bool {
         !self.formats.contains_key(TEXT_MARKDOWN) && self.formats.contains_key(TEXT_HTML)
@@ -90,6 +102,10 @@ pub trait Platform {
     fn show_menu(&mut self, model: MenuModel) -> Result<(), Self::Error>;
     fn hide_menu(&mut self) -> Result<(), Self::Error>;
     fn notify(&mut self, message: &str) -> Result<(), Self::Error>;
+    /// A light, transient notice (e.g. a toast). Defaults to [`Platform::notify`].
+    fn toast(&mut self, message: &str) -> Result<(), Self::Error> {
+        self.notify(message)
+    }
     /// Start reading the clipboard off the UI thread so a menu can be shown
     /// first. Returns false when unsupported; the engine then reads
     /// synchronously with [`Platform::read_clipboard`].
@@ -124,6 +140,8 @@ pub struct FormatItem {
     pub enabled: bool,
     /// Plain text remains explicitly convertible, but is visually de-emphasized.
     pub muted: bool,
+    /// Why a disabled item is unavailable (e.g. 「超过 2MB」).
+    pub note: Option<&'static str>,
 }
 /// Full menus contain Original, a formatted submenu, and Undo. Secondary menus
 /// contain enabled configured formats plus Original and a remember checkbox.
@@ -535,6 +553,7 @@ impl<P: Platform> Engine<P> {
                     shortcut: u8::try_from(index + 2).unwrap_or(u8::MAX),
                     enabled: false,
                     muted: false,
+                    note: None,
                 })
                 .collect(),
             default_choice: Choice::Original,
@@ -605,9 +624,15 @@ impl<P: Platform> Engine<P> {
                     }
                     self.paste(capture, None, false, t)
                 } else if let Some(format) = self.config.format_for(&capture.app) {
-                    let format = capture.markdown.then_some(format);
+                    let mut format = capture.markdown.then_some(format);
                     if loading_shown {
                         self.platform.hide_menu()?;
+                    }
+                    // Too large for rich text: paste numbered plain text instead.
+                    if format == Some(Format::WordRichText) && capture.original.too_large_for_rich()
+                    {
+                        format = Some(Format::ChineseNumbered);
+                        self.platform.toast(RICH_TOO_LARGE_TOAST)?;
                     }
                     self.paste(capture, format, false, t)
                 } else {
@@ -634,11 +659,13 @@ impl<P: Platform> Engine<P> {
             .filter(|item| item.enabled)
             .map(|item| item.format)
             .collect();
+        let large = capture.original.too_large_for_rich();
+        let available = |format: &Format| !(large && *format == Format::WordRichText);
         let default_choice = if capture.markdown && capture.convertible {
             self.config
                 .format_for(&capture.app)
-                .filter(|format| formats.contains(format))
-                .or_else(|| formats.first().copied())
+                .filter(|format| formats.contains(format) && available(format))
+                .or_else(|| formats.iter().copied().find(available))
                 .map(Choice::Format)
                 .unwrap_or(Choice::Original)
         } else {
@@ -677,8 +704,10 @@ impl<P: Platform> Engine<P> {
                 .map(|(index, format)| FormatItem {
                     format,
                     shortcut: u8::try_from(index + 2).unwrap_or(u8::MAX),
-                    enabled: capture.convertible,
+                    enabled: capture.convertible && available(&format),
                     muted: !capture.markdown,
+                    note: (capture.convertible && !available(&format))
+                        .then_some(RICH_TOO_LARGE_NOTE),
                 })
                 .collect(),
             default_choice,
@@ -1025,6 +1054,7 @@ mod tests {
         hides: usize,
         fail_hide: bool,
         fail_write: bool,
+        notices: Vec<String>,
     }
 
     impl Platform for MockPlatform {
@@ -1065,7 +1095,8 @@ mod tests {
             }
             Ok(())
         }
-        fn notify(&mut self, _: &str) -> Result<(), Self::Error> {
+        fn notify(&mut self, message: &str) -> Result<(), Self::Error> {
+            self.notices.push(message.into());
             Ok(())
         }
         fn now(&self) -> u64 {
@@ -1106,6 +1137,110 @@ mod tests {
         engine.handle(Event::HotkeyPressed { t: 10 }).unwrap();
         assert_eq!(engine.platform().pastes, 2);
         assert_eq!(engine.platform().writes.len(), 1);
+    }
+
+    fn large_markdown() -> Snapshot {
+        let block = "## 小节\n\n- **要点**：中文内容 `代码` 与 _强调_。\n\n";
+        let text = format!(
+            "# 大文档\n\n{}",
+            block.repeat(MAX_RICH_BYTES / block.len() + 1)
+        );
+        assert!(text.len() > MAX_RICH_BYTES && text.len() < MAX_TEXT_BYTES);
+        Snapshot::text(text)
+    }
+
+    #[test]
+    fn silent_word_target_over_2mb_pastes_numbered_plain_text_with_toast() {
+        let mut engine = engine();
+        let app = engine.platform_mut().frontmost_app().unwrap();
+        assert_eq!(engine.config().format_for(&app), Some(Format::WordRichText));
+        engine.platform_mut().clipboard = large_markdown();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        for _ in 0..4000 {
+            if engine.platform().pastes > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            engine.tick().unwrap();
+        }
+        assert_eq!(engine.platform().pastes, 1);
+        let written = &engine.platform().writes[0];
+        assert!(!written.formats.contains_key(TEXT_RTF));
+        assert!(!written.formats.contains_key(TEXT_HTML));
+        let plain = std::str::from_utf8(&written.formats[TEXT_PLAIN]).unwrap();
+        assert!(plain.starts_with("大文档"), "{}", &plain[..40]);
+        assert!(plain.contains("一、小节"));
+        assert_eq!(
+            engine.platform().notices,
+            vec![RICH_TOO_LARGE_TOAST.to_string()]
+        );
+    }
+
+    #[test]
+    fn menu_greys_word_rich_text_over_2mb_with_note() {
+        let mut engine = engine();
+        engine.platform_mut().clipboard = large_markdown();
+        engine
+            .handle(Event::FullMenuHotkeyPressed { t: 0 })
+            .unwrap();
+        let menu = engine.platform().menus.last().unwrap().clone();
+        let word = menu
+            .formats
+            .iter()
+            .find(|f| f.format == Format::WordRichText)
+            .unwrap();
+        assert!(!word.enabled);
+        assert_eq!(word.note, Some(RICH_TOO_LARGE_NOTE));
+        assert_ne!(menu.default_choice, Choice::Format(Format::WordRichText));
+        assert!(menu
+            .formats
+            .iter()
+            .filter(|f| f.format != Format::WordRichText)
+            .all(|f| f.enabled && f.note.is_none()));
+        // Small content keeps Word/WPS available.
+        engine.handle(Event::Cancel { t: 1 }).unwrap();
+        engine.platform_mut().clipboard = Snapshot::text("# a\n\n- b");
+        engine
+            .handle(Event::FullMenuHotkeyPressed { t: 2 })
+            .unwrap();
+        let menu = engine.platform().menus.last().unwrap();
+        assert!(menu.formats.iter().all(|f| f.enabled && f.note.is_none()));
+    }
+
+    #[test]
+    fn undo_item_is_greyed_after_undoing() {
+        let mut engine = engine();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        engine
+            .handle(Event::Timer {
+                t: RESTORE_DELAY_MS + 1,
+            })
+            .unwrap();
+        engine
+            .handle(Event::FullMenuHotkeyPressed {
+                t: RESTORE_DELAY_MS + 2,
+            })
+            .unwrap();
+        assert!(engine.platform().menus.last().unwrap().undo_enabled);
+        engine
+            .handle(Event::MenuChoice {
+                t: RESTORE_DELAY_MS + 3,
+                id: engine.platform().menus.last().unwrap().id,
+                choice: Choice::Undo,
+            })
+            .unwrap();
+        assert_eq!(engine.platform().pastes, 2);
+        engine
+            .handle(Event::Timer {
+                t: 2 * RESTORE_DELAY_MS + 10,
+            })
+            .unwrap();
+        engine
+            .handle(Event::FullMenuHotkeyPressed {
+                t: 2 * RESTORE_DELAY_MS + 11,
+            })
+            .unwrap();
+        assert!(!engine.platform().menus.last().unwrap().undo_enabled);
     }
 
     #[test]

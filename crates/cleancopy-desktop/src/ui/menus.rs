@@ -1179,7 +1179,7 @@ mod tests {
                 model.app.name = "Xmessage".into();
                 let output = ctx.run(
                     egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen)),
                         ..Default::default()
                     },
                     |ctx| {

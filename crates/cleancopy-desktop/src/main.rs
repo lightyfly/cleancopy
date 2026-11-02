@@ -53,12 +53,33 @@ fn supervise() -> Result<(), Box<dyn std::error::Error>> {
         crashes.retain(|t| now.duration_since(*t) < WINDOW);
         crashes.push(now);
         if crashes.len() >= MAX_CRASHES {
-            return Err(
-                format!("daemon crashed {MAX_CRASHES} times within 60 s; giving up").into(),
-            );
+            // Not a silent exit (report v5 N-3): notify, keep the hotkey as a
+            // plain paste, and let the tray restart the daemon.
+            eprintln!("CleanCopy daemon crashed {MAX_CRASHES} times within 60 s; safe mode");
+            let config = config_for(&args).unwrap_or_default();
+            match cleancopy_desktop::linux::safe_mode::run(&config, crashes.len())? {
+                cleancopy_desktop::linux::safe_mode::SafeExit::Restart => {
+                    eprintln!("CleanCopy safe mode: restarting daemon");
+                    crashes.clear();
+                    continue;
+                }
+                cleancopy_desktop::linux::safe_mode::SafeExit::Quit => return Ok(()),
+            }
         }
         std::thread::sleep(Duration::from_millis(250 * crashes.len() as u64));
     }
+}
+
+/// The config the daemon would load, for safe mode's hotkeys.
+#[cfg(target_os = "linux")]
+fn config_for(args: &[std::ffi::OsString]) -> Option<Config> {
+    let path = args
+        .iter()
+        .position(|a| a == "--config")
+        .and_then(|i| args.get(i + 1))
+        .map(std::path::PathBuf::from)
+        .or_else(|| config_path().ok())?;
+    Config::load(&path).ok()
 }
 
 /// The supervised child dies with its supervisor, so killing the supervisor

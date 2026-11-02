@@ -21,6 +21,8 @@ use x11rb::{
     CURRENT_TIME,
 };
 
+pub mod safe_mode;
+
 #[derive(Debug)]
 pub struct LinuxError(pub String);
 impl fmt::Display for LinuxError {

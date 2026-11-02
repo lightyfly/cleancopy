@@ -1,4 +1,73 @@
-# Desktop stage C — items 1 and 2
+# Desktop verification
+
+## Desktop acceptance matrix (2026-11-02)
+
+Executed successfully from the repository root:
+
+```sh
+xvfb-run -a -s '-screen 0 1280x800x24 -noreset' cargo test -p cleancopy-desktop -- --ignored --nocapture
+```
+
+The ignored process harness launches the real `cleancopy-app --config`, xfwm4,
+and independent `examples/target.rs` peers on its own isolated 1280×800 Xvfb.
+It builds the application and example executables first, so the command does
+not depend on prebuilt or stale peers. Dependencies: Cargo, Xvfb/xvfb-run,
+xfwm4, xdotool, and an X11 software-rendering environment.
+
+Results: `desktop_runtime_matrix` **1 passed, 0 failed** (8.75 s), and
+`hotkey_pastes_formatted_text_and_restores_all_native_bytes` **1 passed,
+0 failed** (2.44 s). Nonignored tests were filtered out; this is not a full
+workspace regression run. Raw output is saved in `desktop-e2e-run.log`.
+
+| Case | Actual result | Runtime evidence |
+| --- | --- | --- |
+| (a) Single press, plain app | PASS | A gedit-class native peer received `Title\n\n一、Heading\n\nbold`; no menu was mapped during the observed conversion. |
+| (b) Word-like app | PASS | WINWORD.EXE-class peer requested HTML and received semantic H1/Word heading markup and `<strong>bold</strong>`. This is not certification against installed Microsoft Word or WPS. |
+| (c) Clipboard restoration | PASS | All four payload targets restored byte-exactly, including opaque binary, native 16-bit and native 32-bit data, with original property types/formats. The fifth advertised target is TARGETS; its exact membership and native metadata are checked, not its unspecified atom ordering. |
+| (d) Unknown app / remember | PASS | Secondary panel opened without taking target focus; native mouse clicked the remember checkbox, key 2 chose numbered text, rule persisted, and the next press pasted silently. |
+| (e) Double press | PASS | Two rapid native hotkeys opened the full menu with secondary panel collapsed; Escape dismissed it. |
+| (f) Silent mode off | PASS | Two successive single presses each opened the full menu after saving `silent_mode=false`. |
+| (g) Undo conversion | PASS | Native menu click triggered Ctrl+Z followed by original-source paste; peer event log and resulting document bytes were checked. |
+| (h) Latency reporting | PASS for measurement; FAIL for two design budgets | Actual end-to-end observations are listed below. |
+
+Final-run timings (include input-process and polling overhead):
+
+- Unknown-app single press → menu mapped: **430.17 ms**, exceeds ≤100 ms.
+- Double press → full menu mapped: **84.67 ms**.
+- Double press → undo menu mapped: **85.78 ms**.
+- Nonsilent single press → full menu mapped: **47.47 / 47.82 ms**.
+- 10,000 characters, single press → conversion plus native paste: **431.31 ms**,
+  exceeds ≤300 ms. Output bytes and subsequent restoration also passed.
+
+The silent single-press path waits 400 ms to arbitrate double press. These
+measurements include that wait; they are not isolated renderer benchmarks.
+Production timing behavior was not changed and the unmet budgets remain open.
+
+Harness repairs: removed an unused import (no compiler error was reproduced on
+rustc 1.99.1); corrected H1/H2 and trailing-newline expectations to match the
+specified renderer; normalized only TARGETS ordering; moved the secondary-panel
+pixel probe away from its highlighted row. No payload-byte checks were relaxed.
+
+Eight native root-window PNG captures, all 1280×800:
+
+- `screenshots/e2e-secondary.png`
+- `screenshots/e2e-remember-checked.png`
+- `screenshots/e2e-full.png`
+- `screenshots/e2e-undo.png`
+- `screenshots/e2e-nonsilent-1.png`
+- `screenshots/e2e-nonsilent-2.png`
+- `screenshots/e2e-settings.png`
+- `screenshots/e2e-preview.png`
+
+Settings and preview launch probes also passed. Adjacent native smoke probes
+passed for CapsLock+NumLock, held Shift, a competing hotkey grab (BadAccess),
+nonfocus pointer-positioned menu, and Escape. No StatusNotifier host was
+available, so tray integration was not validated. Image Read returned base64
+rather than a usable visual rendering: captures, live panel-pixel checks and
+native actions are evidence, but manual visual acceptance of every label is
+not claimed.
+
+## Historical desktop stage C — items 1 and 2
 
 Scope: visual glyph/alignment fixes and the opt-in Linux X11 platform. No SNI tray registration, default-daemon change, or stage-C item-5 matrix/performance suite is included. This session and its agents did not run `git commit`. An external repository change moved HEAD from `47d5a98` to `742899e` (`WIP stage C (interrupted): Linux hotkey/foreground/paste backend, smoke test, examples`) during verification; it was not reverted or rewritten.
 

@@ -1070,6 +1070,37 @@ mod tests {
     }
 
     #[test]
+    fn item_labels_are_painted_once_in_regular_weight() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let model = render_model();
+        let mut state = MenuState::default();
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    state.show(ctx, &model, false);
+                },
+            ));
+        }
+        let mut hits = Vec::new();
+        for shape in output.unwrap().shapes {
+            if let egui::epaint::Shape::Text(text) = shape.shape {
+                if text.galley.job.text == "粘贴原文" {
+                    hits.push(text.galley.job.sections[0].format.font_id.clone());
+                }
+            }
+        }
+        eprintln!("label shapes: {hits:?}");
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].family, egui::FontFamily::Proportional);
+    }
+
+    #[test]
     fn summary_renders_model_count_and_hides_badge_before_clipping_warning() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);

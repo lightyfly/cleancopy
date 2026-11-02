@@ -239,22 +239,9 @@ impl SettingsState {
                     }
                 }
                 let old = config.fallback;
-                egui::ComboBox::from_id_salt("fallback")
-                    .width(155.0)
-                    .selected_text(match config.fallback {
-                        Fallback::Popup => "弹出格式菜单",
-                        Fallback::Fixed(f) => format_name(f),
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut config.fallback, Fallback::Popup, "弹出格式菜单");
-                        for format in FORMATS {
-                            ui.selectable_value(
-                                &mut config.fallback,
-                                Fallback::Fixed(format),
-                                format_name(format),
-                            );
-                        }
-                    });
+                let mut options = vec![(Fallback::Popup, "弹出格式菜单")];
+                options.extend(FORMATS.map(|f| (Fallback::Fixed(f), format_name(f))));
+                dropdown(ui, "fallback", &mut config.fallback, &options, 155.0);
                 if old != config.fallback {
                     changed = true;
                     self.selected_app = "其他 App".into();
@@ -326,6 +313,15 @@ impl SettingsState {
         }
         ui.add_space(8.0);
         section(ui, "快捷键（点击后按下新的组合键）");
+        ui.horizontal(|ui| {
+            let label = "静默模式 · 按目标 App 规则直接粘贴";
+            ui.label(label);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                changed |= toggle(ui, &mut config.silent_mode, label)
+                    .on_hover_text("关闭后先显示格式菜单；其他 App 的兜底规则仍然生效")
+                    .changed();
+            });
+        });
         for (target, label, hotkey) in [
             (HotkeyTarget::Paste, "智能粘贴", &config.hotkey),
             (
@@ -361,20 +357,6 @@ impl SettingsState {
         if let Some(error) = &self.hotkey_error {
             ui.colored_label(Color32::DARK_RED, error);
         }
-        ui.label(
-            RichText::new(
-                "首次使用：复制后按智能粘贴快捷键；完整菜单快捷键直接打开菜单（托盘也可打开）。",
-            )
-            .size(11.0)
-            .color(MUTED),
-        );
-        ui.horizontal(|ui| {
-            let label = "静默模式 · 按目标 App 规则直接粘贴";
-            changed |= check(ui, &mut config.silent_mode, label)
-                .on_hover_text("关闭后先显示格式菜单；其他 App 的兜底规则仍然生效")
-                .changed();
-            ui.label(label);
-        });
         changed
     }
 
@@ -553,16 +535,13 @@ impl SettingsState {
                 ui.label("显示名称");
                 ui.text_edit_singleline(&mut self.app_name);
                 ui.label("匹配标识（不是窗口标题）");
-                egui::ComboBox::from_id_salt("identifier_kind")
-                    .selected_text(["Bundle ID", "可执行文件名", "WM_CLASS"][self.identifier_kind])
-                    .show_ui(ui, |ui| {
-                        for (i, label) in ["Bundle ID", "可执行文件名", "WM_CLASS"]
-                            .into_iter()
-                            .enumerate()
-                        {
-                            ui.selectable_value(&mut self.identifier_kind, i, label);
-                        }
-                    });
+                dropdown(
+                    ui,
+                    "identifier_kind",
+                    &mut self.identifier_kind,
+                    &[(0, "Bundle ID"), (1, "可执行文件名"), (2, "WM_CLASS")],
+                    155.0,
+                );
                 ui.add(
                     egui::TextEdit::singleline(&mut self.app_identifier).hint_text(
                         [
@@ -834,16 +813,95 @@ fn format_name(format: Format) -> &'static str {
     }
 }
 fn format_combo(ui: &mut egui::Ui, id: impl std::hash::Hash, value: &mut Format) -> bool {
-    let old = *value;
-    egui::ComboBox::from_id_salt(id)
-        .width(155.0)
-        .selected_text(RichText::new(format_name(*value)).size(12.0))
-        .show_ui(ui, |ui| {
-            for format in FORMATS {
-                ui.selectable_value(value, format, format_name(format));
+    let options = FORMATS.map(|f| (f, format_name(f)));
+    dropdown(ui, id, value, &options, 155.0)
+}
+
+/// Borderless select: right-aligned text plus a chevron, light gray only on
+/// hover/open. Replaces egui's ComboBox gray block and filled triangle.
+fn dropdown<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash,
+    value: &mut T,
+    options: &[(T, &str)],
+    width: f32,
+) -> bool {
+    let popup_id = ui.make_persistent_id(("dropdown", id));
+    let current = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .map(|(_, l)| *l)
+        .unwrap_or("");
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 24.0), egui::Sense::click());
+    let open = ui.memory(|m| m.is_popup_open(popup_id));
+    if response.hovered() || open {
+        ui.painter().rect_filled(rect, 5.0, SEG_TRACK);
+    }
+    let chevron = egui::pos2(rect.right() - 12.0, rect.center().y);
+    ui.painter().line(
+        vec![
+            chevron + Vec2::new(-3.5, -1.5),
+            chevron + Vec2::new(0.0, 2.0),
+            chevron + Vec2::new(3.5, -1.5),
+        ],
+        Stroke::new(1.3_f32, SUB),
+    );
+    ui.painter().with_clip_rect(rect).text(
+        egui::pos2(rect.right() - 22.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        current,
+        FontId::proportional(12.0),
+        TEXT,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, current));
+    if response.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let mut changed = false;
+    egui::popup_below_widget(
+        ui,
+        popup_id,
+        &response,
+        egui::PopupCloseBehavior::CloseOnClick,
+        |ui| {
+            ui.set_min_width(width);
+            for (option, label) in options {
+                if ui
+                    .selectable_label(*value == *option, RichText::new(*label).size(12.0))
+                    .clicked()
+                    && *value != *option
+                {
+                    *value = *option;
+                    changed = true;
+                }
             }
-        });
-    old != *value
+        },
+    );
+    changed
+}
+
+/// iOS/macOS-style switch (accent when on, gray when off).
+fn toggle(ui: &mut egui::Ui, value: &mut bool, label: &str) -> egui::Response {
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(32.0, 18.0), egui::Sense::click());
+    if response.clicked() {
+        *value = !*value;
+        response.mark_changed();
+    }
+    let on = *value;
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
+    let t = ui.ctx().animate_bool_with_time(response.id, on, 0.12);
+    let track = Color32::from_rgb(214, 214, 219).lerp_to_gamma(ACCENT, t);
+    ui.painter().rect_filled(rect, 9.0, track);
+    let x = egui::lerp(rect.left() + 9.0..=rect.right() - 9.0, t);
+    let knob = egui::pos2(x, rect.center().y);
+    ui.painter().circle_filled(
+        knob + Vec2::new(0.0, 0.5),
+        7.5,
+        Color32::from_black_alpha(30),
+    );
+    ui.painter().circle_filled(knob, 7.0, Color32::WHITE);
+    response
 }
 fn display_name(name: &str) -> &str {
     match name {

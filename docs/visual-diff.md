@@ -41,11 +41,16 @@ keeps the opaque solid fill (verified by screenshots).
 - Remember row: mock shows a muted `✓`; ours is a functional `☐/☑` checkbox.
 - Tray mock shows `⌘,` / `⌘Q` caps for 设置/退出; those shortcuts do not exist on
   Linux, so no caps are drawn. Tray "recent" rows use sample data in preview.
-- Row label weight renders slightly heavier than the mock with the installed
-  Noto Sans CJK at 13 px; font metrics are system-dependent.
+- Menu item labels are Proportional 13 px regular, painted once (unit test
+  `item_labels_are_painted_once_in_regular_weight`), identical to settings body
+  text. They still look heavier than the browser mock because epaint 0.31
+  boosts glyph coverage with a fixed 0.55 gamma (`ImageData::srgba_pixels`),
+  which eframe does not expose; dense CJK makes it most visible.
 - Settings (960×680, compared against settings.png): sections all visible
-  without scrolling; left column scrolls independently. Remaining: ComboBoxes
-  are egui gray instead of white bordered selects; the Markdown source pane is
+  without scrolling; left column scrolls independently. Dropdowns are now
+  borderless right-aligned text + chevron (gray only on hover/open); 静默模式 is
+  a switch in the first 快捷键 row; the 首次使用 note was removed (no onboarding
+  screen exists yet to hold it). Remaining: the Markdown source pane is
   not syntax-coloured; section titles are 400 not 500 (no Medium CJK face is
   installed on this Linux box, and bold is forbidden); 二级菜单 shows all 5
   formats (mock shows 4); 唤出快捷键 is shown as two editable shortcut rows.

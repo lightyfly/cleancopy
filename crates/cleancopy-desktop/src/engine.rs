@@ -22,6 +22,18 @@ use std::{
 };
 
 pub const RESTORE_DELAY_MS: u64 = 150;
+/// How often a deferred restoration re-asks [`Platform::restore_ready`].
+pub const RESTORE_POLL_MS: u64 = 20;
+/// Upper bound for the size-based restore wait (report v7 D-A).
+pub const RESTORE_MAX_WAIT_MS: u64 = 3000;
+/// Size-based wait before restoring the clipboard on platforms that cannot
+/// observe the target reading it: 150 ms + 400 ms per MB, at most 3 s.
+pub fn restore_wait_ms(bytes: usize) -> u64 {
+    let extra = (bytes as u64).saturating_mul(400) / (1024 * 1024);
+    RESTORE_DELAY_MS
+        .saturating_add(extra)
+        .min(RESTORE_MAX_WAIT_MS)
+}
 pub const BACKGROUND_TEXT_BYTES: usize = 200 * 1024;
 const CONVERSION_POLL_MS: u64 = 16;
 pub const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
@@ -115,6 +127,14 @@ pub trait Platform {
     /// The result of [`Platform::begin_clipboard_read`], once available.
     fn poll_clipboard_read(&mut self) -> Option<Result<Snapshot, Self::Error>> {
         None
+    }
+    /// Whether the clipboard written `elapsed` ms ago (`bytes` long) can be
+    /// restored: the paste target must have finished reading it. Platforms
+    /// that can observe the transfer override this (X11); the default waits
+    /// [`restore_wait_ms`]. Asked from [`RESTORE_DELAY_MS`] on, every
+    /// [`RESTORE_POLL_MS`].
+    fn restore_ready(&mut self, elapsed: u64, bytes: usize) -> bool {
+        elapsed >= restore_wait_ms(bytes)
     }
     /// Nondecreasing Unix milliseconds, shared with persisted pause/history values.
     fn now(&self) -> u64;
@@ -268,6 +288,10 @@ struct Restoration {
     /// ~100 MB, so keeping a second copy here doubled peak memory (report v6).
     written: u64,
     deadline: u64,
+    /// When the converted data was written (just before the paste key).
+    pasted: u64,
+    /// Total bytes written, for [`restore_wait_ms`].
+    bytes: usize,
 }
 fn fingerprint(snapshot: &Snapshot) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -440,8 +464,13 @@ impl<P: Platform> Engine<P> {
                 Ok(())
             }
             Event::Timer { .. } => {
-                if self.restoring.as_ref().is_some_and(|r| t >= r.deadline) {
-                    return self.restore(t);
+                if let Some(r) = self.restoring.as_mut().filter(|r| t >= r.deadline) {
+                    let (elapsed, bytes) = (t.saturating_sub(r.pasted), r.bytes);
+                    // Restore only once the target has read the pasted data.
+                    r.deadline = t.saturating_add(RESTORE_POLL_MS);
+                    if self.platform.restore_ready(elapsed, bytes) {
+                        return self.restore(t);
+                    }
                 }
                 self.poll_pending(t)?;
                 self.poll_conversion(t)
@@ -797,11 +826,14 @@ impl<P: Platform> Engine<P> {
                 return Ok(());
             }
             let fingerprint = fingerprint(&written);
+            let bytes = written.formats.values().map(Vec::len).sum();
             self.platform.write_clipboard(written)?;
             self.restoring = Some(Restoration {
                 original: capture.original.clone(),
                 written: fingerprint,
                 deadline: t.saturating_add(RESTORE_DELAY_MS),
+                pasted: t,
+                bytes,
             });
         }
         // Focus may have changed while accessing the clipboard.
@@ -943,11 +975,14 @@ impl<P: Platform> Engine<P> {
         }
         let original = last.original.to_snapshot();
         let written = fingerprint(&original);
+        let bytes = original.formats.values().map(Vec::len).sum();
         self.platform.write_clipboard(original)?;
         self.restoring = Some(Restoration {
             original: current,
             written,
             deadline: t.saturating_add(RESTORE_DELAY_MS),
+            pasted: t,
+            bytes,
         });
         if !self.target(&app)? {
             return Ok(());

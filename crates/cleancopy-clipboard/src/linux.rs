@@ -6,7 +6,7 @@ use std::{
     path::Path,
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     thread,
@@ -355,6 +355,7 @@ pub struct NativeClipboard {
 }
 struct OwnerThread {
     stop: Arc<AtomicBool>,
+    stats: Arc<TransferStats>,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Drop for OwnerThread {
@@ -427,15 +428,31 @@ impl NativeClipboard {
     pub fn write_snapshot(&self, snapshot: &NativeSnapshot) -> Result<()> {
         self.start_owner(Owner::from_snapshot(snapshot)?)
     }
+    /// How far requestors have got reading the current owner's data, or
+    /// `None` when this handle owns nothing.
+    pub fn transfer_progress(&self) -> Option<TransferProgress> {
+        let owner = self.owner.borrow();
+        let stats = &owner.as_ref()?.stats;
+        let last = stats.last_ms.load(Ordering::Acquire);
+        Some(TransferProgress {
+            served: stats.served.load(Ordering::Acquire),
+            active: stats.active.load(Ordering::Acquire),
+            idle: Duration::from_millis(stats.elapsed_ms().saturating_sub(last)),
+            replaced: stats.replaced.load(Ordering::Acquire),
+        })
+    }
     fn start_owner(&self, owner: Owner) -> Result<()> {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
+        let stats = Arc::clone(&owner.stats);
+        owner.stats.touch();
         let thread = thread::Builder::new()
             .name("cleancopy-x11".into())
             .spawn(move || owner.run(&flag))
             .map_err(error)?;
         *self.owner.borrow_mut() = Some(OwnerThread {
             stop,
+            stats,
             thread: Some(thread),
         });
         Ok(())
@@ -508,6 +525,43 @@ impl PropertyData {
             .map_err(error)
     }
 }
+/// Snapshot of [`NativeClipboard::transfer_progress`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransferProgress {
+    /// Data-target requests fully answered (small replies and finished INCR
+    /// transfers); `TARGETS` queries are not counted.
+    pub served: u64,
+    /// INCR transfers still in progress.
+    pub active: usize,
+    /// Time since the last request or chunk.
+    pub idle: Duration,
+    /// Another client took the selection (a newer copy).
+    pub replaced: bool,
+}
+struct TransferStats {
+    start: Instant,
+    served: AtomicU64,
+    active: AtomicUsize,
+    last_ms: AtomicU64,
+    replaced: AtomicBool,
+}
+impl TransferStats {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            served: AtomicU64::new(0),
+            active: AtomicUsize::new(0),
+            last_ms: AtomicU64::new(0),
+            replaced: AtomicBool::new(false),
+        }
+    }
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+    fn touch(&self) {
+        self.last_ms.store(self.elapsed_ms(), Ordering::Release);
+    }
+}
 struct Transfer {
     property: PropertyData,
     offset: usize,
@@ -518,6 +572,7 @@ struct Owner {
     targets: Atom,
     data: HashMap<Atom, PropertyData>,
     transfers: HashMap<(Window, Atom), Transfer>,
+    stats: Arc<TransferStats>,
 }
 impl Owner {
     fn new(payload: &Payload, mode: WriteMode) -> Result<Self> {
@@ -615,9 +670,11 @@ impl Owner {
             targets,
             data,
             transfers: HashMap::new(),
+            stats: Arc::new(TransferStats::new()),
         })
     }
     fn request(&mut self, request: SelectionRequestEvent) -> Result<()> {
+        self.stats.touch();
         let property = if request.property == 0 {
             request.target
         } else {
@@ -645,6 +702,7 @@ impl Owner {
             } else if let Some(data) = self.data.get(&request.target) {
                 if data.data.len() <= CHUNK_BYTES {
                     data.write(&self.x, request.requestor, property, &data.data)?;
+                    self.stats.served.fetch_add(1, Ordering::AcqRel);
                 } else {
                     // Subscribe before announcing INCR so no delete acknowledgement is lost.
                     self.x
@@ -677,6 +735,9 @@ impl Owner {
                             touched: Instant::now(),
                         },
                     );
+                    self.stats
+                        .active
+                        .store(self.transfers.len(), Ordering::Release);
                 }
                 accepted = true;
             }
@@ -715,7 +776,9 @@ impl Owner {
             transfer.touched = Instant::now();
             if done {
                 self.transfers.remove(&key);
+                self.stats.served.fetch_add(1, Ordering::AcqRel);
             }
+            self.stats.touch();
             self.x.conn.flush().map_err(error)?;
         }
         Ok(())
@@ -742,6 +805,7 @@ impl Owner {
             }
             match polled {
                 Ok(Some(Event::SelectionClear(event))) if event.selection == self.x.selection => {
+                    self.stats.replaced.store(true, Ordering::Release);
                     // Previously accepted INCR transfers still belong to this connection.
                     retiring.get_or_insert_with(Instant::now);
                 }
@@ -751,6 +815,7 @@ impl Owner {
                 }
                 Ok(Some(Event::PropertyNotify(event))) if event.state == Property::DELETE => {
                     if self.chunk(event.window, event.atom).is_err() {
+                        self.stats.touch();
                         self.transfers.remove(&(event.window, event.atom));
                     }
                 }
@@ -773,6 +838,9 @@ impl Owner {
             }
             self.transfers
                 .retain(|_, t| t.touched.elapsed() < Duration::from_secs(30));
+            self.stats
+                .active
+                .store(self.transfers.len(), Ordering::Release);
         }
     }
 }

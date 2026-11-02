@@ -1223,9 +1223,29 @@ fn large_conversion_progress_completes_via_tick_and_restores() {
     await_worker(&mut e);
     assert_eq!(e.platform().pastes, 1);
     assert_eq!(e.platform().writes.len(), 1);
-    let deadline = e.next_deadline().unwrap();
-    timer(&mut e, deadline);
-    assert_eq!(e.platform().clipboard, original);
+    // The written snapshot is large: restoration waits 150 ms + 400 ms/MB.
+    let bytes: usize = e.platform().writes[0].formats.values().map(Vec::len).sum();
+    let wait = cleancopy_desktop::engine::restore_wait_ms(bytes);
+    assert!(wait > RESTORE_DELAY_MS, "{bytes} bytes -> {wait} ms");
+    let mut restored_at = None;
+    while let Some(deadline) = e.next_deadline() {
+        timer(&mut e, deadline);
+        if e.platform().clipboard == original {
+            restored_at = Some(deadline);
+            break;
+        }
+    }
+    assert!(restored_at.is_some());
+}
+
+#[test]
+fn restore_wait_grows_with_size_and_is_capped() {
+    use cleancopy_desktop::engine::restore_wait_ms;
+    assert_eq!(restore_wait_ms(0), 150);
+    assert_eq!(restore_wait_ms(10_000), 153);
+    assert_eq!(restore_wait_ms(1024 * 1024), 550);
+    assert_eq!(restore_wait_ms(5 * 1024 * 1024), 2150);
+    assert_eq!(restore_wait_ms(100 * 1024 * 1024), 3000);
 }
 
 #[test]

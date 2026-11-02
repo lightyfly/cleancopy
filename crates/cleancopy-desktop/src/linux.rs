@@ -528,6 +528,12 @@ impl Platform for LinuxPlatform {
         self.notice = Some(message.into());
         Ok(())
     }
+    fn restore_ready(&mut self, elapsed: u64, _bytes: usize) -> bool {
+        match self.clipboard.transfer_progress() {
+            Some(progress) => x11_restore_ready(elapsed, progress),
+            None => true,
+        }
+    }
     fn now(&self) -> u64 {
         self.epoch
             .saturating_add(self.started.elapsed().as_millis() as u64)
@@ -571,6 +577,22 @@ impl LinuxDriver {
         }
         Ok(handled)
     }
+}
+/// Give up waiting for the paste target after this long (report v7 D-A).
+pub const X11_RESTORE_TIMEOUT_MS: u64 = 5000;
+/// Quiet time after the last request/chunk before the read counts as done:
+/// a target may ask for a second data target right after the first.
+pub const X11_RESTORE_QUIET_MS: u64 = 100;
+/// X11 restore rule: wait until the target has completed at least one data
+/// SelectionRequest, every INCR transfer has finished and the owner has been
+/// quiet briefly; stop waiting at once if a newer copy took the selection
+/// (the engine then skips restoring), or after 5 s.
+pub fn x11_restore_ready(elapsed: u64, progress: cleancopy_clipboard::TransferProgress) -> bool {
+    progress.replaced
+        || elapsed >= X11_RESTORE_TIMEOUT_MS
+        || (progress.served > 0
+            && progress.active == 0
+            && progress.idle >= std::time::Duration::from_millis(X11_RESTORE_QUIET_MS))
 }
 /// Onboarding's own X11 grab of the paste hotkey for the 「试一试」 step.
 ///
@@ -1762,5 +1784,36 @@ mod tests {
         let native = decode_snapshot(&Snapshot::text("test")).unwrap();
         assert_eq!(native.targets.len(), 2);
         assert!(native.targets.iter().any(|t| t.target == b"UTF8_STRING"));
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use cleancopy_clipboard::TransferProgress;
+    use std::time::Duration;
+
+    fn p(served: u64, active: usize, idle: u64, replaced: bool) -> TransferProgress {
+        TransferProgress {
+            served,
+            active,
+            idle: Duration::from_millis(idle),
+            replaced,
+        }
+    }
+
+    #[test]
+    fn x11_restore_waits_for_completed_reads() {
+        // Nothing requested yet (target still busy): keep waiting.
+        assert!(!x11_restore_ready(150, p(0, 0, 150, false)));
+        // INCR in flight: keep waiting, however long the gap.
+        assert!(!x11_restore_ready(4000, p(1, 1, 900, false)));
+        // Served but a follow-up request may come: wait out the quiet time.
+        assert!(!x11_restore_ready(150, p(1, 0, 50, false)));
+        assert!(x11_restore_ready(150, p(1, 0, 100, false)));
+        // Newer copy: stop waiting (the engine then skips the restore).
+        assert!(x11_restore_ready(150, p(0, 1, 0, true)));
+        // Timeout.
+        assert!(x11_restore_ready(5000, p(0, 1, 0, false)));
     }
 }

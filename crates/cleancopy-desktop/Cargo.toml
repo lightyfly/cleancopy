@@ -33,3 +33,4 @@ raw-window-handle = "0.6"
 [dev-dependencies]
 x11rb = "0.13"
 png = "0.17"
+proptest = "1"

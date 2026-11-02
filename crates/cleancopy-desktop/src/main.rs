@@ -20,6 +20,59 @@ struct Args {
     /// Override the settings file for the daemon or settings window.
     #[arg(long)]
     config: Option<std::path::PathBuf>,
+    /// Run the daemon directly, without the crash-restart supervisor.
+    #[arg(long)]
+    no_supervisor: bool,
+}
+
+/// Set on the supervised daemon child so it does not supervise itself.
+#[cfg(target_os = "linux")]
+const SUPERVISED_ENV: &str = "CLEANCOPY_SUPERVISED";
+
+/// Keep the daemon alive: restart it when it exits abnormally (panic, signal),
+/// with a short backoff, giving up after repeated crashes in a short window so
+/// a deterministic startup crash cannot spin forever (report v4 C-1).
+#[cfg(target_os = "linux")]
+fn supervise() -> Result<(), Box<dyn std::error::Error>> {
+    use std::time::{Duration, Instant};
+    const MAX_CRASHES: usize = 5;
+    const WINDOW: Duration = Duration::from_secs(60);
+    let exe = std::env::current_exe()?;
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut crashes: Vec<Instant> = Vec::new();
+    loop {
+        let status = std::process::Command::new(&exe)
+            .args(&args)
+            .env(SUPERVISED_ENV, "1")
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+        eprintln!("CleanCopy daemon exited abnormally ({status}); restarting");
+        let now = Instant::now();
+        crashes.retain(|t| now.duration_since(*t) < WINDOW);
+        crashes.push(now);
+        if crashes.len() >= MAX_CRASHES {
+            return Err(
+                format!("daemon crashed {MAX_CRASHES} times within 60 s; giving up").into(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(250 * crashes.len() as u64));
+    }
+}
+
+/// The supervised child dies with its supervisor, so killing the supervisor
+/// never leaves an orphan daemon holding the hotkey grab.
+#[cfg(target_os = "linux")]
+fn die_with_parent() {
+    // SAFETY: prctl(PR_SET_PDEATHSIG) only changes this process's own signal.
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+    }
+    // The parent may already have exited before prctl took effect.
+    if std::os::unix::process::parent_id() == 1 {
+        std::process::exit(0);
+    }
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -28,6 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("WINIT_UNIX_BACKEND", "x11");
     #[cfg(target_os = "linux")]
     if args.preview.is_none() && !args.settings && !args.onboarding {
+        if std::env::var_os(SUPERVISED_ENV).is_some() {
+            die_with_parent();
+        } else if !args.no_supervisor {
+            return supervise();
+        }
         let path = args.config.map(Ok).unwrap_or_else(config_path)?;
         cleancopy_desktop::linux::run(Config::load(&path)?, Some(path))?;
         return Ok(());

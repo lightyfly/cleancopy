@@ -67,7 +67,9 @@ impl Snapshot {
         };
         // HTML sources count what the reader sees, not tags (N-4).
         if self.html_source() {
-            crate::html_source::visible_chars(text)
+            // A counting bug must never take the daemon down (report v4 C-1).
+            std::panic::catch_unwind(|| crate::html_source::visible_chars(text))
+                .unwrap_or_else(|_| text.chars().count())
         } else {
             text.chars().count()
         }
@@ -232,7 +234,8 @@ struct Conversion {
     capture: Capture,
     format: Format,
     remember: bool,
-    receiver: mpsc::Receiver<Snapshot>,
+    /// `None` means the renderer panicked; the original is pasted instead.
+    receiver: mpsc::Receiver<Option<Snapshot>>,
     cancelled: Arc<AtomicBool>,
     progress: MenuModel,
 }
@@ -690,8 +693,13 @@ impl<P: Platform> Engine<P> {
             {
                 return self.start_conversion(capture, format, remember);
             }
-            let written = render(&capture.original, format, self.config.numbering_style);
-            return self.finish_paste(capture, Some(format), remember, Some(written), t);
+            return match render_guarded(&capture.original, format, self.config.numbering_style) {
+                Some(written) => {
+                    self.finish_paste(capture, Some(format), remember, Some(written), t)
+                }
+                // Converter panic: fall back to pasting the original text.
+                None => self.finish_paste(capture, None, remember, None, t),
+            };
         }
         self.finish_paste(capture, None, remember, None, t)
     }
@@ -776,9 +784,9 @@ impl<P: Platform> Engine<P> {
         std::thread::spawn(move || {
             // Renderers poll the token at block boundaries and stop early;
             // partial output from a cancelled run is never published.
-            if let Some(result) =
-                cleancopy_core::cancel::run(&worker_cancelled, || render(&source, format, style))
-            {
+            if let Some(result) = cleancopy_core::cancel::run(&worker_cancelled, || {
+                render_guarded(&source, format, style)
+            }) {
                 let _ = sender.send(result);
             }
         });
@@ -808,13 +816,18 @@ impl<P: Platform> Engine<P> {
                 .platform
                 .notify("Conversion failed; clipboard unchanged");
         };
+        let capture = Capture {
+            app: conversion.capture.app.clone(),
+            original: conversion.capture.original.clone(),
+            markdown: conversion.capture.markdown,
+            convertible: conversion.capture.convertible,
+        };
+        let Some(written) = written else {
+            // Converter panicked in the worker: paste the original instead.
+            return self.finish_paste(capture, None, conversion.remember, None, t);
+        };
         self.finish_paste(
-            Capture {
-                app: conversion.capture.app.clone(),
-                original: conversion.capture.original.clone(),
-                markdown: conversion.capture.markdown,
-                convertible: conversion.capture.convertible,
-            },
+            capture,
             Some(conversion.format),
             conversion.remember,
             Some(written),
@@ -880,6 +893,26 @@ fn same_target(left: &AppIdentity, right: &AppIdentity) -> bool {
     }
     false
 }
+/// Run a conversion, converting a panic into `None` so the caller can paste
+/// the original text and the hotkey keeps working (report v4 C-1).
+fn render_guarded(
+    original: &Snapshot,
+    format: Format,
+    style: cleancopy_core::NumberingStyle,
+) -> Option<Snapshot> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        if original.formats.contains_key(TEST_PANIC_FORMAT) {
+            panic!("test-induced converter panic");
+        }
+        render(original, format, style)
+    }))
+    .map_err(|_| eprintln!("CleanCopy: converter panicked; pasting original text"))
+    .ok()
+}
+/// Test hook: a snapshot carrying this format makes `render_guarded` panic.
+#[cfg(test)]
+pub const TEST_PANIC_FORMAT: &str = "application/x-cleancopy-test-panic";
 fn render(original: &Snapshot, format: Format, style: cleancopy_core::NumberingStyle) -> Snapshot {
     let raw = original.source_text().unwrap_or_default();
     let markdown;
@@ -1002,6 +1035,49 @@ mod tests {
                 ..MockPlatform::default()
             },
         )
+    }
+
+    #[test]
+    fn converter_panic_pastes_original_and_hotkey_keeps_working() {
+        let mut engine = engine();
+        let original = engine.platform().clipboard.clone();
+        let mut poisoned = original.clone();
+        poisoned
+            .formats
+            .insert(TEST_PANIC_FORMAT.into(), Vec::new());
+        engine.platform_mut().clipboard = poisoned.clone();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        // Original pasted untouched: no clipboard write, one paste.
+        assert_eq!(engine.platform().pastes, 1);
+        assert!(engine.platform().writes.is_empty());
+        assert_eq!(engine.platform().clipboard, poisoned);
+        // The next hotkey still converts normally.
+        engine.platform_mut().clipboard = original.clone();
+        engine.handle(Event::HotkeyPressed { t: 10 }).unwrap();
+        assert_eq!(engine.platform().pastes, 2);
+        assert_eq!(engine.platform().writes.len(), 1);
+    }
+
+    #[test]
+    fn background_converter_panic_pastes_original() {
+        let mut engine = engine();
+        let mut big = Snapshot::text(format!(
+            "# Big\n\n{}",
+            "研发&测试 ".repeat(BACKGROUND_TEXT_BYTES / 8)
+        ));
+        big.formats.insert(TEST_PANIC_FORMAT.into(), Vec::new());
+        engine.platform_mut().clipboard = big.clone();
+        engine.handle(Event::HotkeyPressed { t: 0 }).unwrap();
+        for _ in 0..500 {
+            if engine.platform().pastes > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            engine.tick().unwrap();
+        }
+        assert_eq!(engine.platform().pastes, 1);
+        assert!(engine.platform().writes.is_empty());
+        assert_eq!(engine.platform().clipboard, big);
     }
 
     #[test]

@@ -311,7 +311,9 @@ fn decode_entities(text: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let Some(semi) = rest[..rest.len().min(12)].find(';') else {
+        // Entities are short ASCII; look for `;` within the first 12 bytes
+        // without slicing through a multi-byte char (report v4 C-1).
+        let Some(semi) = rest.bytes().take(12).position(|b| b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;

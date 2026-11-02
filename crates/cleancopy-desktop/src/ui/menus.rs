@@ -91,7 +91,10 @@ impl MenuState {
                 );
                 let galley = ui.painter().layout_job(job);
                 let badge_width = if model.show_remember { 84.0 } else { 94.0 };
-                let show_badge = galley.size().x + badge_width + 8.0 <= summary.width();
+                // During a conversion the target locked at hotkey time must stay
+                // visible (report v3 B-3); the summary is clipped instead.
+                let show_badge =
+                    model.converting || galley.size().x + badge_width + 8.0 <= summary.width();
                 let summary_clip = Rect::from_min_max(
                     summary.min,
                     Pos2::new(
@@ -1152,6 +1155,42 @@ mod tests {
             }
             assert!(found);
             assert_eq!(found_badge, badge);
+        }
+    }
+
+    /// Report v3 B-3: a large conversion (long count) must keep painting the
+    /// target badge locked at hotkey time, recognised or not.
+    #[test]
+    fn converting_always_paints_the_locked_target_badge() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        for (unrecognized, expected) in [(true, "未识别目标"), (false, "Xmessage")] {
+            for (label, screen) in [
+                ("Markdown", Vec2::new(640.0, 360.0)),
+                ("Markdown", Vec2::new(960.0, 600.0)),
+                ("文本过大，只能粘贴原文", Vec2::new(640.0, 360.0)),
+            ] {
+                let mut model = render_model();
+                model.converting = true;
+                model.show_remember = false;
+                model.content_label = label.into();
+                model.source_chars = 5_130_013;
+                model.target_unrecognized = unrecognized;
+                model.app.name = "Xmessage".into();
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        MenuState::default().show(ctx, &model, false);
+                    },
+                );
+                let painted = output.shapes.iter().any(|shape| {
+                    matches!(&shape.shape, egui::epaint::Shape::Text(t) if t.galley.job.text == expected)
+                });
+                assert!(painted, "{expected} missing for {label}");
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 use crate::parse;
 use comrak::{
-    nodes::{AstNode, NodeValue},
+    nodes::{AstNode, ListType, NodeValue},
     Arena,
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,7 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
         headings: vec![],
         heading_level: 0,
         next_list: 1,
+        bullets: false,
     };
     let mut out = String::new();
     for chunk in chunks {
@@ -83,6 +84,8 @@ struct Renderer {
     headings: Vec<usize>,
     heading_level: usize,
     next_list: usize,
+    /// Rendering a top-level bullet list that follows a numbered list.
+    bullets: bool,
 }
 
 impl Renderer {
@@ -139,6 +142,21 @@ impl Renderer {
                 format!("{}{}", marker(self.style, &self.headings), inline(node))
             }
             NodeValue::Paragraph => inline(node),
+            NodeValue::List(list)
+                if self.style == NumberingStyle::Decimal
+                    && list.list_type == ListType::Bullet
+                    && node.previous_sibling().is_some_and(|prev| {
+                        matches!(&prev.data.borrow().value,
+                            NodeValue::List(p) if p.list_type == ListType::Ordered)
+                    }) =>
+            {
+                // Decimal: a bullet list right after a numbered list keeps
+                // bullets instead of continuing the numbers (report v6 D-3).
+                self.bullets = true;
+                let text = self.list(node, &[], 1);
+                self.bullets = false;
+                text
+            }
             NodeValue::List(_) => {
                 let start = if self.style == NumberingStyle::Decimal {
                     self.next_list
@@ -181,10 +199,12 @@ impl Renderer {
                 let mut item_path = path.to_vec();
                 item_path.push(start + index);
                 let indent = "    ".repeat(path.len());
-                let mut out = format!(
-                    "{indent}{}",
+                let marker = if self.bullets && path.is_empty() {
+                    "• ".to_owned()
+                } else {
                     list_marker(self.list_base + path.len(), start + index)
-                );
+                };
+                let mut out = format!("{indent}{marker}");
                 let mut first = true;
                 let mut next_nested = 1;
                 for child in item.children() {

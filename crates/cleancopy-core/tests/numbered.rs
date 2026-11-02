@@ -297,3 +297,10 @@ fn list_base_is_global_to_the_deepest_heading_scheme() {
         "1. A\n\n1.1 B\n\n1.1.1 C\n\nD\n\nE\n（1）l"
     );
 }
+
+#[test]
+fn decimal_bullet_list_after_numbered_list_keeps_bullets() {
+    let md = "1. 甲\n2. 乙\n\n- 点\n- 线\n\n3. 丙\n";
+    let out = render_numbered(md, NumberingStyle::Decimal);
+    assert_eq!(out, "1. 甲\n2. 乙\n\n• 点\n• 线\n\n3. 丙", "{out}");
+}

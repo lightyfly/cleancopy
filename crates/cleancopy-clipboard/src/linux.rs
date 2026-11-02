@@ -2,6 +2,7 @@ use crate::{error, ClipboardFormat, Payload, Result, WriteMode};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fs::{File, OpenOptions},
     io::{Read, Write},
     path::Path,
     process::{Command, Stdio},
@@ -572,12 +573,46 @@ struct Transfer {
     offset: usize,
     touched: Instant,
 }
+// Best-effort diagnostics must never make clipboard ownership depend on file I/O.
+struct OwnerTrace {
+    file: RefCell<File>,
+    start: Instant,
+}
+impl OwnerTrace {
+    fn new(start: Instant) -> Option<Self> {
+        let path = std::env::var_os("CLEANCOPY_X11_TRACE")?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(Self {
+            file: RefCell::new(file),
+            start,
+        })
+    }
+    fn log(&self, message: String) {
+        let mut file = self.file.borrow_mut();
+        let _ = writeln!(file, "{}ms {message}", self.start.elapsed().as_millis());
+        let _ = file.flush();
+    }
+    fn atom(x: &Inspector, atom: Atom) -> String {
+        if atom == 0 {
+            return "NONE(0)".into();
+        }
+        match x.atom_name(atom) {
+            Ok(name) => format!("{:?}({atom})", String::from_utf8_lossy(&name)),
+            Err(cause) => format!("{atom}(lookup error: {cause:?})"),
+        }
+    }
+}
 struct Owner {
     x: Inspector,
     targets: Atom,
     data: HashMap<Atom, PropertyData>,
     transfers: HashMap<(Window, Atom), Transfer>,
     stats: Arc<TransferStats>,
+    trace: Option<OwnerTrace>,
 }
 impl Owner {
     fn new(payload: &Payload, mode: WriteMode) -> Result<Self> {
@@ -670,15 +705,60 @@ impl Owner {
                 "X11 clipboard ownership was replaced before readiness",
             ));
         }
+        let stats = Arc::new(TransferStats::new());
+        let trace = OwnerTrace::new(stats.start);
         Ok(Self {
             x,
             targets,
             data,
             transfers: HashMap::new(),
-            stats: Arc::new(TransferStats::new()),
+            stats,
+            trace,
         })
     }
     fn request(&mut self, request: SelectionRequestEvent) -> Result<()> {
+        let result = self.request_inner(request);
+        if let Some(trace) = &self.trace {
+            let reply = if request.selection != self.x.selection {
+                None
+            } else if request.target == self.targets {
+                Some(format!("small bytes={}", (self.data.len() + 1) * 4))
+            } else {
+                self.data.get(&request.target).map(|data| {
+                    format!(
+                        "{}={}",
+                        if data.data.len() <= CHUNK_BYTES {
+                            "small bytes"
+                        } else {
+                            "INCR total"
+                        },
+                        data.data.len()
+                    )
+                })
+            };
+            trace.log(format!(
+                "SelectionRequest requestor={:#x} target={} property={} effective_property={} {}{}",
+                request.requestor,
+                OwnerTrace::atom(&self.x, request.target),
+                OwnerTrace::atom(&self.x, request.property),
+                OwnerTrace::atom(
+                    &self.x,
+                    if request.property == 0 {
+                        request.target
+                    } else {
+                        request.property
+                    }
+                ),
+                reply.map_or_else(|| "refused".into(), |reply| format!("accepted {reply}")),
+                result
+                    .as_ref()
+                    .err()
+                    .map_or_else(String::new, |cause| format!(" request() error={cause:?}")),
+            ));
+        }
+        result
+    }
+    fn request_inner(&mut self, request: SelectionRequestEvent) -> Result<()> {
         self.stats.touch();
         self.stats.requested.fetch_add(1, Ordering::AcqRel);
         let property = if request.property == 0 {
@@ -733,14 +813,23 @@ impl Owner {
                         .map_err(error)?
                         .check()
                         .map_err(error)?;
-                    self.transfers.insert(
+                    if let Some(previous) = self.transfers.insert(
                         (request.requestor, property),
                         Transfer {
                             property: data.clone(),
                             offset: 0,
                             touched: Instant::now(),
                         },
-                    );
+                    ) {
+                        if let Some(trace) = &self.trace {
+                            trace.log(format!(
+                                "transfer removal window={:#x} property={} offset={} reason=replaced",
+                                request.requestor,
+                                OwnerTrace::atom(&self.x, property),
+                                previous.offset,
+                            ));
+                        }
+                    }
                     self.stats
                         .active
                         .store(self.transfers.len(), Ordering::Release);
@@ -768,6 +857,16 @@ impl Owner {
         self.x.conn.flush().map_err(error)
     }
     fn chunk(&mut self, window: Window, property: Atom) -> Result<()> {
+        let result = self.chunk_inner(window, property);
+        if let (Some(trace), Err(cause)) = (&self.trace, &result) {
+            trace.log(format!(
+                "chunk() error window={window:#x} property={} error={cause:?}",
+                OwnerTrace::atom(&self.x, property),
+            ));
+        }
+        result
+    }
+    fn chunk_inner(&mut self, window: Window, property: Atom) -> Result<()> {
         let key = (window, property);
         if let Some(transfer) = self.transfers.get_mut(&key) {
             let end = (transfer.offset + CHUNK_BYTES).min(transfer.property.data.len());
@@ -778,10 +877,24 @@ impl Owner {
                 &transfer.property.data[transfer.offset..end],
             )?;
             let done = transfer.offset == transfer.property.data.len();
+            if let Some(trace) = &self.trace {
+                trace.log(format!(
+                    "chunk window={window:#x} property={} offset={} length={} final_zero_length={done}",
+                    OwnerTrace::atom(&self.x, property),
+                    transfer.offset,
+                    end - transfer.offset,
+                ));
+            }
             transfer.offset = end;
             transfer.touched = Instant::now();
             if done {
                 self.transfers.remove(&key);
+                if let Some(trace) = &self.trace {
+                    trace.log(format!(
+                        "transfer completion/removal window={window:#x} property={}",
+                        OwnerTrace::atom(&self.x, property),
+                    ));
+                }
                 self.stats.served.fetch_add(1, Ordering::AcqRel);
             }
             self.stats.touch();
@@ -795,6 +908,9 @@ impl Owner {
         let mut drain_synchronized = false;
         loop {
             if stop.load(Ordering::Acquire) && retiring.is_none() {
+                if let Some(trace) = &self.trace {
+                    trace.log("retirement start reason=stop".into());
+                }
                 // Synchronize with the server before draining: requests already routed
                 // to this owner may still be in flight when its replacement is ready.
                 if self.x.owner().is_err() {
@@ -810,19 +926,59 @@ impl Owner {
                 backoff = Backoff::default();
             }
             match polled {
-                Ok(Some(Event::SelectionClear(event))) if event.selection == self.x.selection => {
-                    self.stats.replaced.store(true, Ordering::Release);
-                    // Previously accepted INCR transfers still belong to this connection.
-                    retiring.get_or_insert_with(Instant::now);
+                Ok(Some(Event::SelectionClear(event))) => {
+                    if let Some(trace) = &self.trace {
+                        trace.log(format!(
+                            "SelectionClear owner={:#x} selection={}",
+                            event.owner,
+                            OwnerTrace::atom(&self.x, event.selection),
+                        ));
+                    }
+                    if event.selection == self.x.selection {
+                        self.stats.replaced.store(true, Ordering::Release);
+                        // Previously accepted INCR transfers still belong to this connection.
+                        if retiring.is_none() {
+                            if let Some(trace) = &self.trace {
+                                trace.log("retirement start reason=SelectionClear".into());
+                            }
+                        }
+                        retiring.get_or_insert_with(Instant::now);
+                    }
                 }
                 Ok(Some(Event::SelectionRequest(event))) => {
                     // A disappearing requestor must not take down the clipboard owner.
                     let _ = self.request(event);
                 }
-                Ok(Some(Event::PropertyNotify(event))) if event.state == Property::DELETE => {
-                    if self.chunk(event.window, event.atom).is_err() {
+                Ok(Some(Event::PropertyNotify(event))) => {
+                    if let Some(trace) = &self.trace {
+                        trace.log(format!(
+                            "PropertyNotify window={:#x} atom={} state={} matched={}",
+                            event.window,
+                            OwnerTrace::atom(&self.x, event.atom),
+                            if event.state == Property::NEW_VALUE {
+                                "NEW_VALUE"
+                            } else if event.state == Property::DELETE {
+                                "DELETE"
+                            } else {
+                                "UNKNOWN"
+                            },
+                            self.transfers.contains_key(&(event.window, event.atom)),
+                        ));
+                    }
+                    if event.state == Property::DELETE
+                        && self.chunk(event.window, event.atom).is_err()
+                    {
                         self.stats.touch();
-                        self.transfers.remove(&(event.window, event.atom));
+                        if let Some(transfer) = self.transfers.remove(&(event.window, event.atom)) {
+                            if let Some(trace) = &self.trace {
+                                trace.log(format!(
+                                    "transfer removal window={:#x} property={} offset={} reason=chunk_error",
+                                    event.window,
+                                    OwnerTrace::atom(&self.x, event.atom),
+                                    transfer.offset,
+                                ));
+                            }
+                        }
                     }
                 }
                 Ok(Some(_)) => {}
@@ -842,11 +998,36 @@ impl Owner {
                 Ok(None) => backoff.wait(),
                 Err(_) => break,
             }
-            self.transfers
-                .retain(|_, t| t.touched.elapsed() < Duration::from_secs(30));
+            self.transfers.retain(|&(window, property), transfer| {
+                let keep = transfer.touched.elapsed() < Duration::from_secs(30);
+                if !keep {
+                    if let Some(trace) = &self.trace {
+                        trace.log(format!(
+                            "transfer removal window={window:#x} property={} offset={} reason=30s_expiry",
+                            OwnerTrace::atom(&self.x, property),
+                            transfer.offset,
+                        ));
+                    }
+                }
+                keep
+            });
             self.stats
                 .active
                 .store(self.transfers.len(), Ordering::Release);
+        }
+        if let Some(trace) = &self.trace {
+            for (&(window, property), transfer) in &self.transfers {
+                trace.log(format!(
+                    "transfer removal window={window:#x} property={} offset={} reason=owner_exit",
+                    OwnerTrace::atom(&self.x, property),
+                    transfer.offset,
+                ));
+            }
+            trace.log(format!(
+                "retirement end retiring={} remaining_transfers={}",
+                retiring.is_some(),
+                self.transfers.len(),
+            ));
         }
     }
 }

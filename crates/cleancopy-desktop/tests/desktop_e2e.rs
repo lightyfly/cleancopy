@@ -306,7 +306,13 @@ fn desktop_runtime_matrix() {
     });
     h.display = format!(":{}", fs::read_to_string(display_file).unwrap().trim());
     h.spawn(Command::new("xfwm4").env("DISPLAY", &h.display), "wm");
-    thread::sleep(Duration::from_millis(500));
+    wait("window manager EWMH readiness", || {
+        Command::new("xprop")
+            .env("DISPLAY", &h.display)
+            .args(["-root", "_NET_SUPPORTING_WM_CHECK"])
+            .output()
+            .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("window id #"))
+    });
     // H1 is an unnumbered document title; H2 starts Chinese section numbering.
     let source = b"# Title\r\n\r\n## Heading\r\n\r\n**bold**\r\n";
     let numbered = "Title\n\n一、Heading\n\nbold".as_bytes();
@@ -436,6 +442,84 @@ fn desktop_runtime_matrix() {
         format!("一、Heading\n\n{}", "x".repeat(9987)).as_bytes()
     );
     h.restored(&large_before);
+    // HTML-only web clipboard: no UTF8_STRING/plain/Markdown representation.
+    let html_dir = h.dir.path().join("html-only");
+    fs::create_dir(&html_dir).unwrap();
+    fs::write(
+        html_dir.join("html"),
+        "<html><body><h2>Web heading</h2><p><strong>web bold</strong> text</p></body></html>",
+    )
+    .unwrap();
+    fs::write(
+        html_dir.join("targets.tsv"),
+        "text/html\ttext/html\t8\thtml\n",
+    )
+    .unwrap();
+    h.spawn(
+        Command::new(h.bin.join("examples/target"))
+            .env("DISPLAY", &h.display)
+            .arg("fixture")
+            .arg(&html_dir),
+        "html-only",
+    );
+    wait("HTML-only owner ready", || html_dir.join("ready").exists());
+    let html_original = h.read("text/html");
+    let html_targets = String::from_utf8(h.read("TARGETS").0).unwrap();
+    assert!(
+        !html_targets.contains("UTF8_STRING"),
+        "fixture must be HTML-only: {html_targets}"
+    );
+    assert!(
+        !html_targets.contains("text/plain"),
+        "fixture must be HTML-only: {html_targets}"
+    );
+    h.key(&["ctrl+shift+v"]);
+    let web_output = String::from_utf8(h.paste(&gedit, 3)).unwrap();
+    assert!(web_output.contains("一、Web heading"), "{web_output}");
+    assert!(web_output.contains("web bold text"), "{web_output}");
+    wait("HTML restored", || h.read("text/html") == html_original);
+    println!("PASS S-02 real HTML-only X11 clipboard → Markdown → numbered native paste; original HTML restored");
+
+    // More than 200 KiB takes the worker route; cancel via the real Escape key.
+    // Many independent blocks keep conversion busy long enough to exercise cancellation.
+    let cancellable = format!(
+        "## Background\n\n{}",
+        "**bold** _italic_\n\n".repeat(180_000)
+    );
+    h.fixture(cancellable.as_bytes(), "background-cancel");
+    h.focus(&gedit);
+    let background_menu = h.open(true, false, "background-before");
+    h.key(&["2"]);
+    // Wait for the worker-state footer to paint, rather than merely cancelling
+    // the pre-conversion menu. The track replaces the normal footer text.
+    thread::sleep(Duration::from_millis(60));
+    assert!(
+        h.menu().is_some(),
+        "large conversion finished before cancellation probe"
+    );
+    h.shot("background-progress");
+    h.xdo(&[
+        "mousemove",
+        "--window",
+        &background_menu.to_string(),
+        "308",
+        "201",
+        "click",
+        "1",
+    ]);
+    wait("background cancellation dismissed menu", || {
+        h.menu().is_none()
+    });
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        !gedit.join("paste-4.bin").exists(),
+        "cancelled conversion pasted"
+    );
+    assert_eq!(h.read("UTF8_STRING").0, cancellable.as_bytes());
+    println!(
+        "PASS S-01 real large conversion cancelled via Escape; no paste and clipboard unchanged"
+    );
+
     for (name, args) in [
         ("settings", vec!["--settings"]),
         ("preview", vec!["--preview", "menu-secondary"]),

@@ -970,7 +970,7 @@ impl eframe::App for LinuxApp {
         }
         self.frames = self.frames.saturating_add(1);
         if let Some(model) = model {
-            for event in self.menu.show(ctx, &model, 0, false) {
+            for event in self.menu.show(ctx, &model, false) {
                 let t = self.driver.engine.platform().now();
                 let event = match event {
                     Event::MenuChoice { id, choice, .. } => Event::MenuChoice { t, id, choice },

@@ -77,7 +77,6 @@ pub struct DesktopApp {
     enabled: bool,
     started: Instant,
     epoch: u64,
-    source_chars: usize,
 }
 impl DesktopApp {
     pub fn new(
@@ -114,7 +113,6 @@ impl DesktopApp {
             enabled,
             started: Instant::now(),
             epoch,
-            source_chars: source.chars().count(),
         };
         if view != View::Settings {
             app.sync_pause(epoch);
@@ -230,12 +228,10 @@ impl eframe::App for DesktopApp {
             }
             View::Menu | View::MenuSecondary => {
                 if let Some(model) = self.engine.platform().menu.clone() {
-                    for event in self.menu.show(
-                        ctx,
-                        &model,
-                        self.source_chars,
-                        self.view == View::MenuSecondary,
-                    ) {
+                    for event in self
+                        .menu
+                        .show(ctx, &model, self.view == View::MenuSecondary)
+                    {
                         let event = match event {
                             Event::MenuChoice { id, choice, .. } => {
                                 Event::MenuChoice { t: now, id, choice }
@@ -331,7 +327,6 @@ mod tests {
             error: None,
             started: Instant::now(),
             epoch: 1_000,
-            source_chars: 0,
         }
     }
 

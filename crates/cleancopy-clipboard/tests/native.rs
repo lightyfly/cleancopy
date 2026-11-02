@@ -1,8 +1,23 @@
 //! These tests replace the system clipboard. Run in an isolated Xvfb display.
+
+// Hold a client for the entire test binary, including gaps between tests: Xvfb
+// otherwise resets when the last clipboard connection closes. Serialize owners
+// even with cargo's default parallel test runner.
+#[cfg(target_os = "linux")]
+fn x11_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static CONNECTION: std::sync::OnceLock<x11rb::rust_connection::RustConnection> =
+        std::sync::OnceLock::new();
+    let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    CONNECTION.get_or_init(|| x11rb::connect(None).unwrap().0);
+    lock
+}
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 #[ignore = "requires a graphical clipboard; replaces its contents"]
 fn native_modes_and_byte_sizes() {
+    #[cfg(target_os = "linux")]
+    let _guard = x11_test_guard();
     use cleancopy_clipboard::{ClipboardWriter, NativeClipboard, Payload, WriteMode};
     let clipboard = NativeClipboard::new().unwrap();
     let payload = Payload {
@@ -102,5 +117,47 @@ fn native_modes_and_byte_sizes() {
         let reader = NativeClipboard::new().unwrap();
         assert!(reader.list_formats().unwrap().is_empty());
         assert!(reader.read_text().is_err());
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated X11 display; replaces clipboard contents"]
+fn html_only_snapshot_has_no_synthetic_text_targets() {
+    use cleancopy_clipboard::{ClipboardWriter, NativeClipboard, NativeSnapshot, NativeTarget};
+
+    let _guard = x11_test_guard();
+    let source = NativeClipboard::new().unwrap();
+    let reader = NativeClipboard::new().unwrap();
+    // Exercise both direct properties and the real INCR handshake using only
+    // the public crate API. HTML-to-Markdown conversion belongs to the engine.
+    for html in [
+        "<h1>中文🙂</h1><p><b>HTML only</b></p>".to_owned(),
+        format!("<p>{}</p>", "中文🙂".repeat(20_000)),
+    ] {
+        let snapshot = NativeSnapshot {
+            targets: vec![NativeTarget {
+                target: b"text/html".to_vec(),
+                type_name: b"text/html".to_vec(),
+                format: 8,
+                data: html.as_bytes().to_vec(),
+            }],
+        };
+        source.write_snapshot(&snapshot).unwrap();
+        let formats = reader.list_formats().unwrap();
+        assert_eq!(formats.len(), 2, "only TARGETS and text/html: {formats:?}");
+        assert_eq!(
+            formats
+                .iter()
+                .find(|format| format.name == "text/html")
+                .unwrap()
+                .bytes,
+            html.len()
+        );
+        assert!(reader.read_text().is_err(), "must not fabricate plain text");
+        assert_eq!(reader.read_snapshot().unwrap(), snapshot);
+        let restored = NativeClipboard::new().unwrap();
+        restored.write_snapshot(&snapshot).unwrap();
+        assert_eq!(reader.read_snapshot().unwrap(), snapshot);
     }
 }

@@ -17,8 +17,9 @@ pub enum NumberingStyle {
 
 /// Render plain text with heading-relative numbering and four-space list nesting.
 /// Output uses LF and has no terminal newline. H1 resets the document counters;
-/// skipped heading ancestors are treated as 1. Separate list blocks restart at 1,
-/// regardless of the source marker. Beyond named Chinese levels, decimal paths
+/// skipped heading ancestors are treated as 1. Decimal list blocks in the same
+/// section continue across paragraphs; other styles restart each block at 1.
+/// Source markers are ignored. Beyond named Chinese levels, decimal paths
 /// provide unambiguous numbering without a nesting limit.
 pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
     let arena = Arena::new();
@@ -27,6 +28,7 @@ pub fn render_numbered(markdown: &str, style: NumberingStyle) -> String {
         style,
         headings: vec![],
         heading_level: 0,
+        next_list: 1,
     };
     renderer.blocks(root)
 }
@@ -35,6 +37,7 @@ struct Renderer {
     style: NumberingStyle,
     headings: Vec<usize>,
     heading_level: usize,
+    next_list: usize,
 }
 
 impl Renderer {
@@ -64,6 +67,7 @@ impl Renderer {
     fn block<'a>(&mut self, node: &'a AstNode<'a>) -> String {
         match &node.data.borrow().value {
             NodeValue::Heading(h) => {
+                self.next_list = 1;
                 self.heading_level = usize::from(h.level).saturating_sub(1);
                 if self.heading_level == 0 {
                     self.headings.clear();
@@ -81,7 +85,15 @@ impl Renderer {
                 format!("{}{}", marker(self.style, &self.headings), inline(node))
             }
             NodeValue::Paragraph => inline(node),
-            NodeValue::List(_) => self.list(node, &[]),
+            NodeValue::List(_) => {
+                let start = if self.style == NumberingStyle::Decimal {
+                    self.next_list
+                } else {
+                    1
+                };
+                self.next_list = start + node.children().count();
+                self.list(node, &[], start)
+            }
             NodeValue::CodeBlock(code) => code
                 .literal
                 .strip_suffix('\n')
@@ -108,21 +120,28 @@ impl Renderer {
         }
     }
 
-    fn list<'a>(&mut self, node: &'a AstNode<'a>, path: &[usize]) -> String {
+    fn list<'a>(&mut self, node: &'a AstNode<'a>, path: &[usize], start: usize) -> String {
         node.children()
             .enumerate()
             .map(|(index, item)| {
                 let mut item_path = path.to_vec();
-                item_path.push(index + 1);
+                item_path.push(start + index);
                 let mut full_path = self.headings.clone();
                 full_path.extend_from_slice(&item_path);
                 let indent = "    ".repeat(path.len());
                 let mut out = format!("{indent}{}", marker(self.style, &full_path));
                 let mut first = true;
+                let mut next_nested = 1;
                 for child in item.children() {
                     if matches!(child.data.borrow().value, NodeValue::List(_)) {
+                        let nested_start = if self.style == NumberingStyle::Decimal {
+                            next_nested
+                        } else {
+                            1
+                        };
+                        next_nested = nested_start + child.children().count();
                         out.push('\n');
-                        out.push_str(&self.list(child, &item_path));
+                        out.push_str(&self.list(child, &item_path, nested_start));
                         first = false;
                     } else {
                         // A heading inside an item belongs to that item, not the
@@ -166,6 +185,16 @@ fn marker(style: NumberingStyle, path: &[usize]) -> String {
         (NumberingStyle::Chinese, 2) => format!("（{}）", chinese(n)),
         (NumberingStyle::Chinese, 3) | (NumberingStyle::ChineseCompact, 2) => format!("{n}. "),
         (NumberingStyle::Chinese, 4) => format!("（{n}）"),
+        (NumberingStyle::Chinese, 5) if n <= 50 => {
+            let base = match n {
+                1..=20 => 0x2460,
+                21..=35 => 0x3251 - 20,
+                _ => 0x32b1 - 35,
+            };
+            char::from_u32(base + n as u32 - 1).unwrap().to_string()
+        }
+        (NumberingStyle::Chinese, 5) => format!("（{n}）"),
+        (NumberingStyle::Chinese, 6) => format!("{}. ", alphabetic(n)),
         (NumberingStyle::ChineseCompact, 3) => format!("({n}) "),
         _ => {
             let path = path
@@ -212,28 +241,18 @@ fn chinese(n: usize) -> String {
     out
 }
 
-fn inline<'a>(node: &'a AstNode<'a>) -> String {
-    let mut out = String::new();
-    for child in node.children() {
-        let text = inline_raw(child);
-        // Match the preview's Chinese emphasis boundary without touching code
-        // literals, ordinary prose spaces, or spaces around Latin words.
-        if matches!(
-            child.data.borrow().value,
-            NodeValue::Strong | NodeValue::Emph
-        ) && out.ends_with(' ')
-            && out.trim_end_matches(' ').chars().last().is_some_and(is_cjk)
-            && text.chars().next().is_some_and(is_cjk)
-        {
-            out.truncate(out.trim_end_matches(' ').len());
-        }
-        out.push_str(&text);
+fn alphabetic(mut n: usize) -> String {
+    let mut letters = Vec::new();
+    while n > 0 {
+        n -= 1;
+        letters.push((b'a' + (n % 26) as u8) as char);
+        n /= 26;
     }
-    out
+    letters.into_iter().rev().collect()
 }
 
-fn is_cjk(ch: char) -> bool {
-    matches!(ch, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{20000}'..='\u{3134f}')
+fn inline<'a>(node: &'a AstNode<'a>) -> String {
+    node.children().map(inline_raw).collect()
 }
 
 fn inline_raw<'a>(node: &'a AstNode<'a>) -> String {

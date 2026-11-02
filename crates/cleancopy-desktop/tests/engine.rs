@@ -15,6 +15,7 @@ struct Mock {
     notices: Vec<String>,
     fail: Option<&'static str>,
     focus_after_write: Option<AppIdentity>,
+    secure_after_write: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     now: u64,
     pasted: Vec<Snapshot>,
     effects: Vec<&'static str>,
@@ -697,6 +698,9 @@ fn opaque_original(text: &str) -> Snapshot {
         .insert("native/private".into(), vec![0, 255, 128, 13, 10, 0]);
     snapshot
         .formats
+        .insert(TEXT_MARKDOWN.into(), text.as_bytes().to_vec());
+    snapshot
+        .formats
         .insert(TEXT_HTML.into(), b"original html\0\r\n".to_vec());
     snapshot
         .formats
@@ -992,7 +996,7 @@ fn stale_escape_and_invalid_accelerators_cannot_dismiss_or_paste_new_menu() {
 }
 
 #[test]
-fn unknown_primary_immediately_opens_secondary_for_all_content() {
+fn unknown_primary_pastes_plain_and_huge_directly_but_other_content_opens_secondary() {
     for snapshot in [
         Snapshot::text("# heading"),
         Snapshot::text("ordinary text"),
@@ -1012,6 +1016,18 @@ fn unknown_primary_immediately_opens_secondary_for_all_content() {
         let mut e = engine("unknown", "");
         e.platform_mut().clipboard = snapshot.clone();
         hot(&mut e, 0);
+        if !markdown
+            && snapshot
+                .formats
+                .get(TEXT_PLAIN)
+                .is_some_and(|b| std::str::from_utf8(b).is_ok())
+        {
+            assert!(e.platform().menus.is_empty());
+            assert_eq!(e.platform().pasted, vec![snapshot]);
+            assert!(e.platform().writes.is_empty());
+            assert_eq!(e.next_deadline(), None);
+            continue;
+        }
         assert_eq!(e.platform().menus.len(), 1);
         let menu = &e.platform().menus[0];
         assert_eq!(menu.kind, MenuKind::Secondary);
@@ -1069,5 +1085,235 @@ fn explicit_full_hotkey_overrides_silent_mode_for_all_content() {
             assert_eq!(e.platform().clipboard, snapshot);
             assert_eq!(e.next_deadline(), None);
         }
+    }
+}
+
+#[test]
+fn menu_counts_unicode_scalars_even_for_over_limit_source() {
+    for text in [
+        "汉字🙂e\u{301}".to_owned(),
+        "汉🙂".repeat(MAX_TEXT_BYTES / 7 + 1),
+    ] {
+        let expected = text.chars().count();
+        let mut e = engine("unknown", &text);
+        full(&mut e, 0);
+        assert_eq!(e.platform().menus[0].source_chars, expected);
+        assert!(!e.platform().menus[0].converting);
+    }
+}
+
+#[test]
+fn html_is_preferred_over_plain_and_normalized_before_every_pipeline() {
+    for plain in [None, Some("incorrect fallback")] {
+        for format in [
+            Format::Markdown,
+            Format::PlainStripped,
+            Format::ChineseNumbered,
+            Format::WordRichText,
+        ] {
+            let html = "<h1>Title</h1><h2>Heading</h2><p><strong>bold</strong> &amp; text</p>";
+            let mut e = engine("unknown", "");
+            let mut original = Snapshot::default();
+            original
+                .formats
+                .insert(TEXT_HTML.into(), html.as_bytes().to_vec());
+            if let Some(plain) = plain {
+                original
+                    .formats
+                    .insert(TEXT_PLAIN.into(), plain.as_bytes().to_vec());
+            }
+            e.platform_mut().clipboard = original.clone();
+            full(&mut e, 0);
+            assert_eq!(e.platform().menus[0].content_label, "HTML");
+            choose(&mut e, 1, Choice::Format(format));
+            let written = &e.platform().pasted[0];
+            let text = std::str::from_utf8(&written.formats[TEXT_PLAIN]).unwrap();
+            assert!(text.contains("Title"));
+            assert!(text.contains("bold"));
+            assert!(!text.contains("incorrect fallback"));
+            assert!(!text.contains("<h1>"));
+            if format == Format::Markdown {
+                assert!(text.contains("**bold**"));
+            }
+            if format == Format::WordRichText {
+                assert!(written.formats.contains_key(TEXT_RTF));
+            }
+            timer(&mut e, 151);
+            assert_eq!(e.platform().clipboard, original);
+        }
+    }
+}
+
+#[test]
+fn explicit_markdown_takes_precedence_over_html() {
+    let mut e = engine("notion", "plain");
+    e.platform_mut()
+        .clipboard
+        .formats
+        .insert(TEXT_HTML.into(), b"<h1>wrong</h1>".to_vec());
+    e.platform_mut()
+        .clipboard
+        .formats
+        .insert(TEXT_MARKDOWN.into(), b"# correct\r\n".to_vec());
+    hot(&mut e, 0);
+    assert_eq!(
+        e.platform().pasted[0].formats[TEXT_MARKDOWN],
+        b"# correct\r\n"
+    );
+}
+
+fn large_engine() -> Engine<Mock> {
+    engine(
+        "WINWORD.EXE",
+        &format!("# Title\n\n{}", "**bold** text\n\n".repeat(18_000)),
+    )
+}
+fn await_worker(e: &mut Engine<Mock>) {
+    for _ in 0..5000 {
+        if e.platform().pastes > 0 || e.next_deadline().is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let t = e.next_deadline().unwrap();
+        timer(e, t);
+    }
+    panic!("worker did not finish within five seconds");
+}
+
+#[test]
+fn large_conversion_progress_completes_via_tick_and_restores() {
+    let mut e = large_engine();
+    let original = e.platform().clipboard.clone();
+    hot(&mut e, 0);
+    assert_eq!(e.platform().pastes, 0);
+    assert!(e.platform().writes.is_empty());
+    assert!(e.platform().menus.last().unwrap().converting);
+    assert_eq!(e.next_deadline(), Some(16));
+    // Other hotkeys and choices cannot overlap the job.
+    hot(&mut e, 1);
+    full(&mut e, 2);
+    choose(&mut e, 3, Choice::Original);
+    await_worker(&mut e);
+    assert_eq!(e.platform().pastes, 1);
+    assert_eq!(e.platform().writes.len(), 1);
+    let deadline = e.next_deadline().unwrap();
+    timer(&mut e, deadline);
+    assert_eq!(e.platform().clipboard, original);
+}
+
+#[test]
+fn cancel_or_pause_large_conversion_never_writes_or_pastes_and_stale_result_is_safe() {
+    for pause in [false, true] {
+        let mut e = large_engine();
+        let original = e.platform().clipboard.clone();
+        hot(&mut e, 0);
+        let old_id = e.platform().menus.last().unwrap().id;
+        e.handle(if pause {
+            Event::Pause { t: 1, until: None }
+        } else {
+            Event::Cancel { t: 1 }
+        })
+        .unwrap();
+        assert_eq!(e.next_deadline(), None);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        timer(&mut e, 100);
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().pastes, 0);
+        assert_eq!(e.platform().clipboard, original);
+        e.handle(Event::Resume { t: 101 }).unwrap();
+        e.platform_mut().clipboard = Snapshot::text("# new");
+        full(&mut e, 102);
+        e.handle(Event::MenuChoice {
+            t: 103,
+            id: old_id,
+            choice: Choice::Original,
+        })
+        .unwrap();
+        choose(&mut e, 104, Choice::Original);
+        assert_eq!(e.platform().pasted, vec![Snapshot::text("# new")]);
+    }
+}
+
+#[test]
+fn background_completion_rechecks_clipboard_and_foreground() {
+    for focus in [false, true] {
+        let mut e = large_engine();
+        hot(&mut e, 0);
+        if focus {
+            e.platform_mut().app = app("other");
+        } else {
+            e.platform_mut().clipboard = Snapshot::text("new clipboard");
+        }
+        await_worker(&mut e);
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().pastes, 0);
+        assert_eq!(e.platform().notices.len(), 1);
+    }
+}
+
+struct MockSecure(std::rc::Rc<std::cell::Cell<bool>>);
+impl cleancopy_desktop::secure_input::SecureInput for MockSecure {
+    fn enabled(&self) -> bool {
+        self.0.get()
+    }
+}
+fn secure_engine(text: &str) -> (Engine<Mock>, std::rc::Rc<std::cell::Cell<bool>>) {
+    let state = std::rc::Rc::new(std::cell::Cell::new(false));
+    let e = Engine::with_secure_input(
+        Config::default(),
+        Mock {
+            app: app("WINWORD.EXE"),
+            clipboard: Snapshot::text(text),
+            ..Default::default()
+        },
+        MockSecure(state.clone()),
+    );
+    (e, state)
+}
+#[test]
+fn secure_input_blocks_both_hotkeys_before_read_or_menu() {
+    for full_hotkey in [false, true] {
+        let (mut e, state) = secure_engine("# secret");
+        state.set(true);
+        if full_hotkey {
+            full(&mut e, 0);
+        } else {
+            hot(&mut e, 0);
+        }
+        assert_eq!(e.platform().effects, vec!["notify"]);
+        assert!(e.platform().menus.is_empty());
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().pastes, 0);
+        assert!(e.platform().notices[0].contains("Secure Input"));
+    }
+}
+#[test]
+fn secure_input_rechecked_for_menu_and_background_completion() {
+    for background in [false, true] {
+        let text = if background {
+            format!("# Title\n{}", "**bold** ".repeat(30_000))
+        } else {
+            "# small".into()
+        };
+        let (mut e, state) = secure_engine(&text);
+        if background {
+            hot(&mut e, 0);
+        } else {
+            full(&mut e, 0);
+        }
+        state.set(true);
+        if background {
+            await_worker(&mut e);
+        } else {
+            choose(&mut e, 1, Choice::Format(Format::WordRichText));
+        }
+        assert!(e.platform().writes.is_empty());
+        assert_eq!(e.platform().pastes, 0);
+        assert!(e
+            .platform()
+            .notices
+            .last()
+            .unwrap()
+            .contains("Secure Input"));
     }
 }

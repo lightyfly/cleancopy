@@ -30,13 +30,7 @@ pub struct MenuState {
 impl MenuState {
     /// Draw a standalone menu canvas, returning only model-authorized engine events.
     /// `secondary` opens the format panel immediately; `MenuKind::Secondary` does too.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        model: &MenuModel,
-        chars: usize,
-        secondary: bool,
-    ) -> Vec<Event> {
+    pub fn show(&mut self, ctx: &egui::Context, model: &MenuModel, secondary: bool) -> Vec<Event> {
         if self.id != Some(model.id) {
             self.id = Some(model.id);
             self.main = match model.default_choice {
@@ -71,57 +65,74 @@ impl MenuState {
                     main.min + Vec2::new(16.0, 8.0),
                     Vec2::new(main.width() - 32.0, 30.0),
                 );
-                // Reserve badge space rather than allowing a long content label to overlap it.
+                // Content restrictions take priority over decorative target tags.
+                let summary_text = format!(
+                    "{} · {} 字",
+                    model.content_label,
+                    grouped(model.source_chars)
+                );
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(summary_text, FontId::proportional(12.0), SUB);
                 let badge_width = if model.show_remember { 84.0 } else { 94.0 };
+                let show_badge = galley.size().x + badge_width + 8.0 <= summary.width();
                 let summary_clip = Rect::from_min_max(
                     summary.min,
-                    Pos2::new(summary.right() - badge_width - 5.0, summary.bottom()),
+                    Pos2::new(
+                        summary.right() - if show_badge { badge_width + 8.0 } else { 0.0 },
+                        summary.bottom(),
+                    ),
                 );
-                ui.painter().with_clip_rect(summary_clip).text(
-                    summary.left_center(),
-                    Align2::LEFT_CENTER,
-                    format!("剪贴板  {} · {} 字", model.content_label, grouped(chars)),
-                    FontId::proportional(12.0),
+                ui.painter().with_clip_rect(summary_clip).galley(
+                    summary.left_center() - Vec2::new(0.0, galley.size().y / 2.0),
+                    galley,
                     SUB,
                 );
-                let badge = Rect::from_min_size(
-                    Pos2::new(summary.right() - badge_width, summary.top() + 5.0),
-                    Vec2::new(badge_width, 20.0),
-                );
-                let (label, color, bg) = if model.show_remember {
-                    (
-                        "未识别目标".to_owned(),
-                        Color32::from_rgb(178, 94, 9),
-                        Color32::from_rgb(255, 244, 229),
-                    )
-                } else {
-                    (
-                        if model.app.name.is_empty() {
-                            "已识别目标".into()
-                        } else {
-                            model.app.name.clone()
-                        },
-                        ACCENT,
-                        Color32::from_rgb(238, 238, 252),
-                    )
-                };
-                ui.painter().rect_filled(badge, 5.0, bg);
-                ui.painter().with_clip_rect(badge.shrink(3.0)).text(
-                    badge.center(),
-                    Align2::CENTER_CENTER,
-                    label,
-                    FontId::proportional(11.0),
-                    color,
-                );
+                if show_badge {
+                    let badge = Rect::from_min_size(
+                        Pos2::new(summary.right() - badge_width, summary.top() + 5.0),
+                        Vec2::new(badge_width, 20.0),
+                    );
+                    let (label, color, bg) = if model.show_remember {
+                        (
+                            "未识别目标".to_owned(),
+                            Color32::from_rgb(178, 94, 9),
+                            Color32::from_rgb(255, 244, 229),
+                        )
+                    } else {
+                        (
+                            if model.app.name.is_empty() {
+                                "已识别目标".into()
+                            } else {
+                                model.app.name.clone()
+                            },
+                            ACCENT,
+                            Color32::from_rgb(238, 238, 252),
+                        )
+                    };
+                    ui.painter().rect_filled(badge, 5.0, bg);
+                    ui.painter().with_clip_rect(badge.shrink(3.0)).text(
+                        badge.center(),
+                        Align2::CENTER_CENTER,
+                        label,
+                        FontId::proportional(11.0),
+                        color,
+                    );
+                }
                 line(
                     ui,
                     main.left() + 14.0,
                     main.right() - 14.0,
                     main.top() + 45.0,
                 );
-                let format_enabled = model.formats.iter().any(|f| f.enabled);
+                let format_enabled = !model.converting && model.formats.iter().any(|f| f.enabled);
                 for (index, (icon, label, hint, enabled)) in [
-                    ("⌁", "粘贴原文", "1", model.original_enabled),
+                    (
+                        "⌁",
+                        "粘贴原文",
+                        "1",
+                        model.original_enabled && !model.converting,
+                    ),
                     ("✦", "粘贴格式化文本", "›", format_enabled),
                     (
                         "↺",
@@ -131,7 +142,7 @@ impl MenuState {
                         } else {
                             "Ctrl+Z"
                         },
-                        model.undo_enabled,
+                        model.undo_enabled && !model.converting,
                     ),
                 ]
                 .into_iter()
@@ -179,20 +190,53 @@ impl MenuState {
                     main.right() - 14.0,
                     main.top() + 146.0,
                 );
-                text(
-                    ui,
-                    main.min + Vec2::new(16.0, 160.0),
-                    "↑↓ 选择 · ↵ 粘贴 · esc 取消",
-                    11.0,
-                    MUTED,
-                );
-                ui.painter().text(
-                    main.min + Vec2::new(main.width() - 16.0, 160.0),
-                    Align2::RIGHT_CENTER,
-                    "CleanCopy",
-                    FontId::proportional(11.0),
-                    MUTED,
-                );
+                if model.converting {
+                    let progress = Rect::from_min_size(
+                        main.min + Vec2::new(16.0, 151.0),
+                        Vec2::new(main.width() - 100.0, 3.0),
+                    );
+                    ui.painter().rect_filled(progress, 1.5, LINE);
+                    let phase = ctx.input(|input| input.time) as f32 % 1.0;
+                    let segment = Rect::from_min_size(
+                        progress.min + Vec2::new(phase * progress.width() * 0.7, 0.0),
+                        Vec2::new(progress.width() * 0.3, 3.0),
+                    );
+                    ui.painter().rect_filled(segment, 1.5, ACCENT);
+                    text(
+                        ui,
+                        main.min + Vec2::new(16.0, 165.0),
+                        "正在转换… · esc 取消",
+                        11.0,
+                        SUB,
+                    );
+                    let cancel = Rect::from_min_size(
+                        main.min + Vec2::new(main.width() - 70.0, 149.0),
+                        Vec2::new(54.0, 24.0),
+                    );
+                    text(ui, cancel.left_center(), "取消", 12.0, ACCENT);
+                    if ui
+                        .interact(cancel, ui.id().with("cancel-conversion"), Sense::click())
+                        .clicked()
+                    {
+                        events.push(Event::Cancel { t: TIME });
+                    }
+                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                } else {
+                    text(
+                        ui,
+                        main.min + Vec2::new(16.0, 160.0),
+                        "↑↓ 选择 · ↵ 粘贴 · esc 取消",
+                        11.0,
+                        MUTED,
+                    );
+                    ui.painter().text(
+                        main.min + Vec2::new(main.width() - 16.0, 160.0),
+                        Align2::RIGHT_CENTER,
+                        "CleanCopy",
+                        FontId::proportional(11.0),
+                        MUTED,
+                    );
+                }
                 if self.expanded {
                     panel(ui, sub);
                     text(
@@ -212,15 +256,19 @@ impl MenuState {
                             label,
                             &item.shortcut.to_string(),
                             self.main == 1 && self.format == index,
-                            item.enabled,
+                            item.enabled && !model.converting,
                             item.muted,
                         );
-                        if item.enabled && pointer_moved(ctx) && response.hovered() {
+                        if !model.converting
+                            && item.enabled
+                            && pointer_moved(ctx)
+                            && response.hovered()
+                        {
                             self.main = 1;
                             self.format = index;
                             self.in_submenu = true;
                         }
-                        if item.enabled && response.clicked() {
+                        if !model.converting && item.enabled && response.clicked() {
                             events.push(choice_event(model, Choice::Format(item.format)));
                         }
                     }
@@ -266,6 +314,9 @@ impl MenuState {
                 id: model.id,
                 key: MenuKey::Escape,
             });
+            return;
+        }
+        if model.converting {
             return;
         }
         for (key, digit) in [
@@ -759,6 +810,8 @@ mod tests {
             }],
             default_choice: Choice::Format(Format::Markdown),
             content_label: "Markdown".into(),
+            source_chars: 42,
+            converting: false,
             original_enabled: true,
             undo_enabled: false,
             show_remember: true,
@@ -868,6 +921,118 @@ mod tests {
             .collect();
         assert!(text.contains(&config.full_menu_hotkey.as_str()));
         assert!(!text.contains(&config.hotkey.as_str()));
+    }
+
+    fn render_model() -> MenuModel {
+        MenuModel {
+            id: 123,
+            kind: MenuKind::Full,
+            app: Default::default(),
+            formats: vec![],
+            default_choice: Choice::Original,
+            content_label: "Markdown".into(),
+            source_chars: 1234,
+            converting: false,
+            original_enabled: true,
+            undo_enabled: true,
+            show_remember: true,
+            remember: false,
+        }
+    }
+
+    #[test]
+    fn summary_renders_model_count_and_hides_badge_before_clipping_warning() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        for (label, chars, badge) in [
+            ("Markdown", 1234, true),
+            ("文本过大，只能粘贴原文", 6_000_000, false),
+        ] {
+            let mut model = render_model();
+            model.content_label = label.into();
+            model.source_chars = chars;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    MenuState::default().show(ctx, &model, false);
+                },
+            );
+            let mut found = false;
+            let mut found_badge = false;
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    if text.galley.job.text == format!("{label} · {} 字", grouped(chars)) {
+                        assert!(shape
+                            .clip_rect
+                            .contains_rect(Rect::from_min_size(text.pos, text.galley.size())));
+                        found = true;
+                    }
+                    found_badge |= text.galley.job.text == "未识别目标";
+                }
+            }
+            assert!(found);
+            assert_eq!(found_badge, badge);
+        }
+    }
+
+    #[test]
+    fn converting_blocks_choice_keys_but_keeps_escape_and_cancel_button() {
+        let ctx = egui::Context::default();
+        let mut model = render_model();
+        model.converting = true;
+        let mut state = MenuState::default();
+        for key in [egui::Key::Num1, egui::Key::Enter, egui::Key::Escape] {
+            let mut events = Vec::new();
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| state.keyboard(ctx, &model, &mut events),
+            );
+            assert_eq!(events.len(), usize::from(key == egui::Key::Escape));
+        }
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                state.show(ctx, &model, false);
+            },
+        );
+        for pressed in [true, false] {
+            let pos = Pos2::new(300.0, 200.0);
+            let mut events = Vec::new();
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| events = state.show(ctx, &model, false),
+            );
+            if !pressed {
+                assert_eq!(events, vec![Event::Cancel { t: TIME }]);
+            }
+        }
     }
 
     #[test]

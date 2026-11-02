@@ -9,12 +9,21 @@
 //! canonical UTF-8 MIME text formats. No native clipboard code lives here.
 
 use crate::config::{AppIdentity, Config, Format};
+use crate::secure_input::{NativeSecureInput, SecureInput};
 use cleancopy_core::{
     is_markdown, render_html, render_numbered, render_plain, render_rtf, render_word_html,
 };
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
+};
 
 pub const RESTORE_DELAY_MS: u64 = 150;
+pub const BACKGROUND_TEXT_BYTES: usize = 200 * 1024;
+const CONVERSION_POLL_MS: u64 = 16;
 pub const MAX_TEXT_BYTES: usize = 5 * 1024 * 1024;
 pub const TEXT_PLAIN: &str = "text/plain";
 pub const TEXT_MARKDOWN: &str = "text/markdown";
@@ -36,11 +45,23 @@ impl Snapshot {
     }
     /// Prefer an explicitly supplied Markdown representation, without rewriting it.
     pub fn source_text(&self) -> Option<&str> {
-        self.formats
-            .get(TEXT_MARKDOWN)
-            .or_else(|| self.formats.get(TEXT_PLAIN))
+        self.source_bytes()
             .filter(|bytes| bytes.len() <= MAX_TEXT_BYTES)
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
+    }
+    fn source_bytes(&self) -> Option<&Vec<u8>> {
+        self.formats
+            .get(TEXT_MARKDOWN)
+            .or_else(|| self.formats.get(TEXT_HTML))
+            .or_else(|| self.formats.get(TEXT_PLAIN))
+    }
+    fn html_source(&self) -> bool {
+        !self.formats.contains_key(TEXT_MARKDOWN) && self.formats.contains_key(TEXT_HTML)
+    }
+    fn source_chars(&self) -> usize {
+        self.source_bytes()
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .map_or(0, |s| s.chars().count())
     }
 }
 
@@ -94,6 +115,8 @@ pub struct MenuModel {
     /// Initial highlighted action; ordinary or unconvertible content uses Original.
     pub default_choice: Choice,
     pub content_label: String,
+    pub source_chars: usize,
+    pub converting: bool,
     pub original_enabled: bool,
     pub undo_enabled: bool,
     pub show_remember: bool,
@@ -174,6 +197,19 @@ struct Menu {
     capture: Capture,
     model: MenuModel,
 }
+struct Conversion {
+    capture: Capture,
+    format: Format,
+    remember: bool,
+    receiver: mpsc::Receiver<Snapshot>,
+    cancelled: Arc<AtomicBool>,
+    progress: MenuModel,
+}
+impl Drop for Conversion {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
 struct Restoration {
     original: Snapshot,
     written: Snapshot,
@@ -196,9 +232,18 @@ pub struct Engine<P: Platform> {
     menu: Option<Menu>,
     restoring: Option<Restoration>,
     undo: Option<Undo>,
+    conversion: Option<Conversion>,
+    secure_input: Box<dyn SecureInput>,
 }
 impl<P: Platform> Engine<P> {
     pub fn new(config: Config, platform: P) -> Self {
+        Self::with_secure_input(config, platform, NativeSecureInput)
+    }
+    pub fn with_secure_input(
+        config: Config,
+        platform: P,
+        secure_input: impl SecureInput + 'static,
+    ) -> Self {
         Self {
             platform,
             config,
@@ -208,6 +253,8 @@ impl<P: Platform> Engine<P> {
             menu: None,
             restoring: None,
             undo: None,
+            conversion: None,
+            secure_input: Box::new(secure_input),
         }
     }
     pub fn config(&self) -> &Config {
@@ -227,7 +274,11 @@ impl<P: Platform> Engine<P> {
         &mut self.platform
     }
     pub fn next_deadline(&self) -> Option<u64> {
-        self.restoring.as_ref().map(|r| r.deadline)
+        self.restoring.as_ref().map(|r| r.deadline).or_else(|| {
+            self.conversion
+                .as_ref()
+                .map(|_| self.now.saturating_add(CONVERSION_POLL_MS))
+        })
     }
     /// Dispatch a native hotkey using the injected clock.
     pub fn hotkey_pressed(&mut self) -> Result<(), P::Error> {
@@ -255,6 +306,17 @@ impl<P: Platform> Engine<P> {
         self.now = t;
         match event {
             Event::MenuKey { id, key, .. } => {
+                if self
+                    .conversion
+                    .as_ref()
+                    .is_some_and(|c| c.progress.id == id)
+                {
+                    return if key == MenuKey::Escape {
+                        self.cancel()
+                    } else {
+                        Ok(())
+                    };
+                }
                 let Some(menu) = self.menu.as_ref().filter(|menu| menu.model.id == id) else {
                     return Ok(());
                 };
@@ -278,7 +340,7 @@ impl<P: Platform> Engine<P> {
                 if self.restoring.as_ref().is_some_and(|r| t >= r.deadline) {
                     return self.restore(t);
                 }
-                Ok(())
+                self.poll_conversion(t)
             }
             Event::Cancel { .. } => self.cancel(),
             Event::Pause { until, .. } => {
@@ -339,16 +401,21 @@ impl<P: Platform> Engine<P> {
             }
             Event::HotkeyPressed { .. } | Event::FullMenuHotkeyPressed { .. } => {
                 if self.restoring.is_some()
+                    || self.conversion.is_some()
                     || self.menu.is_some()
                     || self.paused
                     || self.config.paused_until.is_some_and(|until| t < until)
                 {
                     return Ok(());
                 }
+                if self.secure_blocked()? {
+                    return Ok(());
+                }
                 let app = self.platform.frontmost_app()?;
                 let original = self.platform.read_clipboard()?;
                 let convertible = original.source_text().is_some();
-                let markdown = original.source_text().is_some_and(is_markdown);
+                let markdown = convertible
+                    && (original.html_source() || original.source_text().is_some_and(is_markdown));
                 let capture = Capture {
                     app,
                     original,
@@ -358,6 +425,13 @@ impl<P: Platform> Engine<P> {
                 if matches!(event, Event::FullMenuHotkeyPressed { .. }) || !self.config.silent_mode
                 {
                     self.open_menu(capture, MenuKind::Full)
+                } else if !capture.markdown
+                    && capture
+                        .original
+                        .source_bytes()
+                        .is_some_and(|b| std::str::from_utf8(b).is_ok())
+                {
+                    self.paste(capture, None, false, t)
                 } else if let Some(format) = self.config.format_for(&capture.app) {
                     let format = capture.markdown.then_some(format);
                     self.paste(capture, format, false, t)
@@ -368,7 +442,8 @@ impl<P: Platform> Engine<P> {
         }
     }
     fn cancel(&mut self) -> Result<(), P::Error> {
-        if self.menu.take().is_some() {
+        let converting = self.conversion.take().is_some();
+        if self.menu.take().is_some() || converting {
             // Invalidate callbacks even when the adapter fails to hide the menu.
             self.platform.hide_menu()?;
         }
@@ -396,12 +471,12 @@ impl<P: Platform> Engine<P> {
         };
         let content_label = if capture
             .original
-            .formats
-            .get(TEXT_MARKDOWN)
-            .or_else(|| capture.original.formats.get(TEXT_PLAIN))
+            .source_bytes()
             .is_some_and(|bytes| bytes.len() > MAX_TEXT_BYTES)
         {
             "文本过大，只能粘贴原文"
+        } else if capture.original.html_source() && capture.convertible {
+            "HTML"
         } else if capture.markdown {
             "Markdown"
         } else if capture.convertible {
@@ -433,6 +508,8 @@ impl<P: Platform> Engine<P> {
                 .collect(),
             default_choice,
             content_label,
+            source_chars: capture.original.source_chars(),
+            converting: false,
             original_enabled: true,
             undo_enabled: self
                 .undo
@@ -446,6 +523,9 @@ impl<P: Platform> Engine<P> {
         Ok(())
     }
     fn target(&mut self, app: &AppIdentity) -> Result<bool, P::Error> {
+        if self.secure_blocked()? {
+            return Ok(false);
+        }
         if same_target(app, &self.platform.frontmost_app()?) {
             Ok(true)
         } else {
@@ -472,7 +552,39 @@ impl<P: Platform> Engine<P> {
         }
         let converted = format.filter(|_| capture.convertible);
         if let Some(format) = converted {
+            if capture
+                .original
+                .source_bytes()
+                .is_some_and(|s| s.len() > BACKGROUND_TEXT_BYTES)
+            {
+                return self.start_conversion(capture, format, remember);
+            }
             let written = render(&capture.original, format, self.config.numbering_style);
+            return self.finish_paste(capture, Some(format), remember, Some(written), t);
+        }
+        self.finish_paste(capture, None, remember, None, t)
+    }
+    fn finish_paste(
+        &mut self,
+        capture: Capture,
+        converted: Option<Format>,
+        remember: bool,
+        written: Option<Snapshot>,
+        t: u64,
+    ) -> Result<(), P::Error> {
+        if !self.target(&capture.app)? {
+            return Ok(());
+        }
+        if self.platform.read_clipboard()? != capture.original {
+            return self
+                .platform
+                .notify("Paste cancelled: clipboard changed since the hotkey");
+        }
+        if let Some(written) = written {
+            // Recheck immediately before mutating clipboard as well as before injection.
+            if self.secure_blocked()? {
+                return Ok(());
+            }
             self.platform.write_clipboard(written.clone())?;
             self.restoring = Some(Restoration {
                 original: capture.original.clone(),
@@ -496,6 +608,87 @@ impl<P: Platform> Engine<P> {
             }
         }
         Ok(())
+    }
+    fn secure_blocked(&mut self) -> Result<bool, P::Error> {
+        if !self.secure_input.enabled() {
+            return Ok(false);
+        }
+        self.cancel()?;
+        self.platform
+            .notify("Paste blocked: Secure Input is enabled")?;
+        Ok(true)
+    }
+    fn start_conversion(
+        &mut self,
+        capture: Capture,
+        format: Format,
+        remember: bool,
+    ) -> Result<(), P::Error> {
+        self.open_menu(capture, MenuKind::Full)?;
+        let Menu { capture, mut model } = self.menu.take().unwrap();
+        model.converting = true;
+        model.original_enabled = false;
+        model.undo_enabled = false;
+        model.show_remember = false;
+        for item in &mut model.formats {
+            item.enabled = false;
+        }
+        if let Err(error) = self.platform.show_menu(model.clone()) {
+            let _ = self.platform.hide_menu();
+            return Err(error);
+        }
+        let source = capture.original.clone();
+        let style = self.config.numbering_style;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            if worker_cancelled.load(Ordering::Relaxed) {
+                return;
+            }
+            let result = render(&source, format, style);
+            if !worker_cancelled.load(Ordering::Relaxed) {
+                let _ = sender.send(result);
+            }
+        });
+        self.conversion = Some(Conversion {
+            capture,
+            format,
+            remember,
+            receiver,
+            cancelled,
+            progress: model,
+        });
+        Ok(())
+    }
+    fn poll_conversion(&mut self, t: u64) -> Result<(), P::Error> {
+        let Some(conversion) = self.conversion.as_ref() else {
+            return Ok(());
+        };
+        let result = match conversion.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(mpsc::TryRecvError::Disconnected) => None,
+        };
+        let conversion = self.conversion.take().unwrap();
+        self.platform.hide_menu()?;
+        let Some(written) = result else {
+            return self
+                .platform
+                .notify("Conversion failed; clipboard unchanged");
+        };
+        self.finish_paste(
+            Capture {
+                app: conversion.capture.app.clone(),
+                original: conversion.capture.original.clone(),
+                markdown: conversion.capture.markdown,
+                convertible: conversion.capture.convertible,
+            },
+            Some(conversion.format),
+            conversion.remember,
+            Some(written),
+            t,
+        )
     }
     fn restore(&mut self, t: u64) -> Result<(), P::Error> {
         // Advance before fallible effects, avoiding a busy-loop on a past deadline.
@@ -557,7 +750,14 @@ fn same_target(left: &AppIdentity, right: &AppIdentity) -> bool {
     false
 }
 fn render(original: &Snapshot, format: Format, style: cleancopy_core::NumberingStyle) -> Snapshot {
-    let source = original.source_text().unwrap_or_default();
+    let raw = original.source_text().unwrap_or_default();
+    let markdown;
+    let source = if original.html_source() {
+        markdown = html2md::parse_html(raw);
+        &markdown
+    } else {
+        raw
+    };
     match format {
         Format::Markdown => {
             let mut result = Snapshot::text(source);

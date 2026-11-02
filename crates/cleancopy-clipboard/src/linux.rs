@@ -77,6 +77,18 @@ fn validate_target(target: &NativeTarget) -> Result<()> {
     Ok(())
 }
 
+// X servers reset when their last client disconnects. Keep an independent client
+// alive across test setup/teardown, and serialize tests sharing CLIPBOARD. This
+// belongs to the test fixture: production must not suppress genuine X11 errors.
+#[cfg(test)]
+fn native_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static CONNECTION: std::sync::OnceLock<Inspector> = std::sync::OnceLock::new();
+    let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    CONNECTION.get_or_init(|| Inspector::new().unwrap());
+    lock
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +179,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated X11 display; replaces clipboard contents"]
     fn snapshot_roundtrip_raw_targets_and_incr() {
+        let _guard = native_test_guard();
         let clipboard = NativeClipboard::new().unwrap();
         assert_eq!(
             clipboard.read_snapshot().unwrap(),
@@ -227,6 +240,7 @@ mod retirement_tests {
     #[test]
     #[ignore = "requires an isolated X11 display; replaces clipboard contents"]
     fn retired_owner_drains_routed_requests_and_incr() {
+        let _guard = native_test_guard();
         for (len, stopped) in [
             (4, false),
             (4, true),
@@ -270,7 +284,10 @@ mod retirement_tests {
             let worker = thread::spawn(move || owner.run(&AtomicBool::new(stopped)));
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
-                if let Event::SelectionNotify(event) = reader.event(deadline).unwrap() {
+                if let Event::SelectionNotify(event) = reader
+                    .event(deadline)
+                    .unwrap_or_else(|error| panic!("len={len}, stopped={stopped}: {error}"))
+                {
                     assert_ne!(event.property, 0);
                     break;
                 }
@@ -678,6 +695,7 @@ impl Owner {
     }
     fn run(mut self, stop: &AtomicBool) {
         let mut retiring = None;
+        let mut drain_synchronized = false;
         loop {
             if stop.load(Ordering::Acquire) && retiring.is_none() {
                 // Synchronize with the server before draining: requests already routed
@@ -705,7 +723,19 @@ impl Owner {
                     }
                 }
                 Ok(Some(_)) => {}
-                Ok(None) if retiring.is_some() && self.transfers.is_empty() => break,
+                Ok(None) if retiring.is_some() && self.transfers.is_empty() => {
+                    if drain_synchronized {
+                        break;
+                    }
+                    // A nonblocking poll can consume a pending reply and return
+                    // None while later SelectionRequest packets remain unread.
+                    // A round trip pulls all pre-retirement events into x11rb's
+                    // queue before an empty poll is allowed to finish draining.
+                    if self.x.owner().is_err() {
+                        break;
+                    }
+                    drain_synchronized = true;
+                }
                 Ok(None) => thread::sleep(Duration::from_millis(2)),
                 Err(_) => break,
             }

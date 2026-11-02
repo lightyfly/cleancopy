@@ -1011,7 +1011,9 @@ fn rich_preview(ui: &mut egui::Ui, html: &str) {
                 _ => 13.0,
             };
             let format = egui::TextFormat {
-                font_id: if code {
+                font_id: if bold || heading > 0 {
+                    FontId::new(if code { 12.0 } else { size }, super::fonts::bold_family())
+                } else if code {
                     FontId::monospace(12.0)
                 } else {
                     FontId::proportional(size)
@@ -1023,8 +1025,6 @@ fn rich_preview(ui: &mut egui::Ui, html: &str) {
                     Color32::TRANSPARENT
                 },
                 italics: italic,
-                extra_letter_spacing: if bold || heading > 0 { 0.35 } else { 0.0 },
-                // Slight tracking distinguishes emphasis without requiring a bundled bold font.
                 underline: if link {
                     Stroke::new(1.0_f32, ACCENT)
                 } else {
@@ -1099,6 +1099,45 @@ fn decode_entities(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_preview_uses_real_bold_family_for_emphasis_and_headings() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rich_preview(
+                    ui,
+                    "<body><h1>标题</h1><p>正文<strong>剪贴板监听</strong><em>斜体</em></p></body>",
+                );
+            });
+        });
+        let mut bold_runs = 0;
+        let mut regular_runs = 0;
+        for shape in output.shapes {
+            if let egui::epaint::Shape::Text(text) = shape.shape {
+                for section in &text.galley.job.sections {
+                    let run = &text.galley.job.text[section.byte_range.clone()];
+                    if run == "标题" || run == "剪贴板监听" {
+                        assert_eq!(
+                            section.format.font_id.family,
+                            super::super::fonts::bold_family()
+                        );
+                        assert_eq!(section.format.extra_letter_spacing, 0.0);
+                        bold_runs += 1;
+                    } else if run == "正文" || run == "斜体" {
+                        assert_eq!(
+                            section.format.font_id.family,
+                            egui::FontFamily::Proportional
+                        );
+                        regular_runs += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(bold_runs, 2);
+        assert_eq!(regular_runs, 2);
+    }
 
     fn record(
         state: &mut SettingsState,
@@ -1261,6 +1300,7 @@ mod tests {
     #[test]
     fn view_renders_every_format_without_changing_configuration() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let mut config = Config::default();
         let mut state = SettingsState::default();
         state.markdown.push_str("\n\n| A | B |\n|---|---|\n| **bold** | *italic* |\n\n```rust\nlet x = 1;\n```\n\n> quote\n\n[link](https://example.com)");

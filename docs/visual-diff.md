@@ -19,17 +19,20 @@ those files was therefore not evidence of the menu at all.
 | Menu border | `1px rgba(0,0,0,.08)`, radius 12 | 1px black α20, radius 12 (was `--line`). |
 | Key caps | `.kbd span`: min 18×18, padding 0 4, 1px `--line`, radius 4, `#FAFAFB`, 500 11px `--mute`, gap 3 | Painted caps with exactly these values; hints like `Ctrl+Z` / `Ctrl+Alt+V` / `⌘Z` split into caps (`hints_split_into_design_key_caps`). Was plain text. |
 | Selected row | `--sel #5B5BD6`, radius 6, white text, icon/hint `rgba(255,255,255,.8)`, caps `rgba(255,255,255,.15)` fill + `.3` border | Same values (icon was pure white; caps new). |
-| Summary chip | `剪贴板 <b>Markdown · 1,284 字</b>` | `剪贴板` in `--sub` + summary in bold `--text` (was single `--sub` run without the label). |
+| Summary chip | `剪贴板 <b>Markdown · 1,284 字</b>` | `剪贴板` in `--sub` + summary in regular-weight `--text` (bold removed per the no-bold rule). |
 | Tray panel | Panel ends 6px after the last item | Height 346 → 304; removed ~40 px of empty space. |
 
 ## Blur / translucency
 
 Design: `rgba(255,255,255,.92)` + `backdrop-filter: blur(30px)`.
 `ui/backdrop.rs` selects the material per platform: macOS
-`NSVisualEffectView`, Windows 11 Mica, Linux solid fill. **Only the Linux solid
-fallback is implemented and verified.** The macOS/Windows native hooks are not
-wired (no native adapters exist yet), so every platform currently paints
-opaque white.
+`NSVisualEffectView`, Windows 11 Mica, Linux solid fill. macOS/Windows are
+wired through `window-vibrancy` 0.8 (`backdrop::apply` at window creation,
+transparent viewport, transparent clear colour, panel fill α235). They were
+**only compile-checked** from Linux: `cargo check`/`cargo clippy -D warnings`
+for `x86_64-pc-windows-msvc` and `aarch64-apple-darwin` succeed. Nothing was
+linked or run on macOS/Windows, so the runtime look is **not verified**. Linux
+keeps the opaque solid fill (verified by screenshots).
 
 ## Remaining differences (intentional or not fixed)
 
@@ -40,7 +43,14 @@ opaque white.
   Linux, so no caps are drawn. Tray "recent" rows use sample data in preview.
 - Row label weight renders slightly heavier than the mock with the installed
   Noto Sans CJK at 13 px; font metrics are system-dependent.
-- Settings window not re-compared in this pass beyond the round-2 fixes.
+- Settings (960×680, compared against settings.png): sections all visible
+  without scrolling; left column scrolls independently. Remaining: ComboBoxes
+  are egui gray instead of white bordered selects; the Markdown source pane is
+  not syntax-coloured; section titles are 400 not 500 (no Medium CJK face is
+  installed on this Linux box, and bold is forbidden); 二级菜单 shows all 5
+  formats (mock shows 4); 唤出快捷键 is shown as two editable shortcut rows.
+- Word preview headings/emphasis still render with the bold family because
+  that is the pasted content's formatting, not UI chrome.
 
 ## Screenshots (docs/screenshots/)
 

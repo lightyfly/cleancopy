@@ -109,7 +109,7 @@ release gate is **not passed** merely because these items pass.
 | N-3 Word/WPS nested lists | `<p>` inside `<li>` unwrapped, empty `<li>` dropped, explicit `list-style-type` per depth. `tests/word_lists.rs` (4). Not verified in installed Word/WPS. |
 | N-4 visible-text char count | `visible_chars` strips tags/script/style/head and decodes entities. `html_source_menu_counts_visible_text_not_tags`. |
 | Target lock at hotkey press | Target captured at press; own pid and transient popups (notification, popup/dropdown menu, tooltip, combo, dnd) rejected. `large_conversion_keeps_the_target_locked_at_hotkey_time`. |
-| Visual pass | Design shadow/border, key caps, selected-row colours, chip summary; blur strategy in `ui/backdrop.rs` (Linux solid fallback). See visual-diff.md. |
+| Visual pass | Design shadow/border, key caps, selected-row colours, chip summary; blur strategy in `ui/backdrop.rs` (Linux solid fallback verified; macOS NSVisualEffectView / Windows Mica via window-vibrancy compile-checked only, not run). Settings 960×680 rework (row tint, segmented controls, secondary list, no bold, CJK font priority). See visual-diff.md. |
 
 See [desktop-verification.md](desktop-verification.md) for runtime method and
 adjacent probes, [compat.md](compat.md) for compatibility scope, and

@@ -999,6 +999,7 @@ pub fn run(config: Config, save_path: Option<PathBuf>) -> Result<()> {
                 last_sync: Instant::now(),
                 last_x_activity: Instant::now(),
                 last_frame: Instant::now(),
+                was_busy: false,
                 shape: Vec::new(),
             };
             if !app.driver.engine.config().onboarding_done {
@@ -1036,6 +1037,8 @@ struct LinuxApp {
     actions: std::sync::mpsc::Receiver<crate::ui::menus::TrayAction>,
     last_x_activity: Instant,
     last_frame: Instant,
+    /// Busy→idle edge: give large conversion buffers back to the OS.
+    was_busy: bool,
     enabled: bool,
     settings_child: Option<std::process::Child>,
     quitting: bool,
@@ -1385,6 +1388,10 @@ impl eframe::App for LinuxApp {
             || self.frames <= 6
             || self.last_x_activity.elapsed() < std::time::Duration::from_millis(250)
             || config_dirty;
+        if self.was_busy && !busy {
+            release_freed_heap();
+        }
+        self.was_busy = busy;
         ctx.request_repaint_after(if busy {
             std::time::Duration::from_millis(8)
         } else if self.settings_child.is_some() {
@@ -1395,6 +1402,16 @@ impl eframe::App for LinuxApp {
         });
         // Native mapping is managed above, not through focus-affecting viewport commands.
         let _ = egui::ViewportId::ROOT;
+    }
+}
+
+/// glibc keeps freed arena/heap pages (e.g. a 5 MB clipboard and its rendered
+/// formats) mapped, so RSS stays at its peak forever. Trim once per job.
+fn release_freed_heap() {
+    #[cfg(target_env = "gnu")]
+    // SAFETY: malloc_trim only releases free memory; it has no preconditions.
+    unsafe {
+        libc::malloc_trim(0);
     }
 }
 

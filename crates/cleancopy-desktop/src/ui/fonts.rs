@@ -37,13 +37,11 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     symbols.retain(|path| seen.insert(path.clone()));
     for (index, path) in symbols.iter().enumerate() {
-        let Ok(bytes) = std::fs::read(path) else {
+        let Some(data) = font_data(path) else {
             continue;
         };
         let name = format!("system-symbols-{index}");
-        fonts
-            .font_data
-            .insert(name.clone(), egui::FontData::from_owned(bytes).into());
+        fonts.font_data.insert(name.clone(), data.into());
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push(name.clone());
         }
@@ -64,11 +62,9 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
     bold_candidates.retain(|path| seen_bold.insert(path.clone()));
     let mut bold_names = Vec::new();
     for (index, path) in bold_candidates.iter().enumerate() {
-        if let Ok(bytes) = std::fs::read(path) {
+        if let Some(data) = font_data(path) {
             let name = format!("system-bold-{index}");
-            fonts
-                .font_data
-                .insert(name.clone(), egui::FontData::from_owned(bytes).into());
+            fonts.font_data.insert(name.clone(), data.into());
             bold_names.push(name);
         }
     }
@@ -77,10 +73,9 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
     }
     let mut loaded_cjk = None;
     for path in candidates.into_iter().filter(|path| !is_bold(path)) {
-        let Ok(bytes) = std::fs::read(&path) else {
+        let Some(mut data) = font_data(&path) else {
             continue;
         };
-        let mut data = egui::FontData::from_owned(bytes);
         data.index = ttc_face_index(&path);
         fonts.font_data.insert("system-cjk".into(), data.into());
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
@@ -100,6 +95,57 @@ pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
         eprintln!("No system CJK font found; using egui fallback fonts");
     }
     loaded_cjk
+}
+
+/// Font bytes for egui. On Linux the file is memory-mapped once per process
+/// (and cached across windows), so the ~40 MB of CJK collections are
+/// page-cache-backed and only touched glyph tables count toward RSS, instead
+/// of being copied onto the heap for every window.
+fn font_data(path: &Path) -> Option<egui::FontData> {
+    #[cfg(target_os = "linux")]
+    {
+        mapped(path).map(egui::FontData::from_static)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::fs::read(path).ok().map(egui::FontData::from_owned)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn mapped(path: &Path) -> Option<&'static [u8]> {
+    use std::collections::HashMap;
+    use std::os::fd::AsRawFd;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, &'static [u8]>>> = OnceLock::new();
+    let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+    if let Some(bytes) = cache.get(path) {
+        return Some(bytes);
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let len = usize::try_from(file.metadata().ok()?.len()).ok()?;
+    if len == 0 {
+        return None;
+    }
+    // SAFETY: read-only private mapping of a regular file that is never
+    // unmapped (lives for the process, like the fonts it backs); the fd may be
+    // closed after mmap returns.
+    let bytes = unsafe {
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE,
+            file.as_raw_fd(),
+            0,
+        );
+        if ptr == libc::MAP_FAILED {
+            return None;
+        }
+        std::slice::from_raw_parts(ptr as *const u8, len)
+    };
+    cache.insert(path.to_path_buf(), bytes);
+    Some(bytes)
 }
 
 /// CJK regular-weight font priority: PingFang SC, then Microsoft YaHei UI,

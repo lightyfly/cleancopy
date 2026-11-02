@@ -132,3 +132,51 @@ as part of this change).
 - Item 6: Chinese numbering rule, see design.md §7.1 and tests in tests/numbered.rs.
 - Item 7: e2e screenshots go to target/e2e-screenshots by default; `scripts/e2e-desktop.sh --update-screenshots` writes docs/screenshots.
 - e2e: exit 0, 13 PASS lines (docs/desktop-e2e-run.log).
+
+## Round v4 (2026-11-02, UTC+8)
+
+Workspace gates at every commit: `cargo build --workspace --all-targets`,
+`cargo test --workspace` (**238 passed, 0 failed, 7 ignored**),
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+`scripts/e2e-desktop.sh`: exit 0, 13 PASS lines (docs/desktop-e2e-run.log).
+
+- H1 rule (PM): a single leading H1 is the document title (unnumbered; Word
+  `MsoTitle` / RTF `Title` style); then H2=一、 H3=（一） H4=1.; several H1s →
+  H1=一、. No H1 at all is treated like the title case. design.md §7.1.
+- M-4: onboarding step 3 pauses the daemon's global grab (pid marker) so the
+  try box receives Ctrl+Shift+V; 「更改快捷键」 opens Settings recording the paste hotkey.
+- M-2: undo row no longer advertises Ctrl+Z (not a global binding).
+- M-6: custom traffic-light title bar only on macOS; native decorations and
+  per-window titles elsewhere. Known cosmetic: the in-content title strip still
+  repeats the window title on Linux/Windows.
+- M-3 (WPS first-level bullets): **not reproduced** — WPS cannot be started on
+  the isolated test display. Likely cause: Word-HTML `disc` imports as a Symbol-font
+  glyph and no Symbol/Wingdings font is installed here. No code change.
+
+### 10k characters → conversion + native paste (S-perf)
+
+| Build | Measure | Result |
+|---|---|---|
+| aa99cd9 (round v3) e2e, debug | hotkey → native paste | 19.61 ms |
+| HEAD e2e, debug, 10 runs | hotkey → native paste | 18.52–20.06 ms (median ≈18.8) |
+| aa99cd9 core, release, realistic 10k Markdown | detect + numbered + Word HTML + RTF + plain | 3.35 ms median |
+| HEAD core, same input | same | 3.29 ms median |
+
+No regression between aa99cd9 and HEAD, so no bisect was needed; budget <100 ms met.
+
+### Memory (release daemon worker process, Xvfb, VmRSS / VmHWM)
+
+| Point | Before (aa99cd9 and pre-fix HEAD) | After (mmap fonts + malloc_trim) |
+|---|---:|---:|
+| Idle after launch | 199.2 MB | 119.6 MB |
+| After 10k paste | 200.0 MB | 120.4 MB |
+| After 5 MB paste | 301.5 MB (stays) | 135.5 MB (peak 222.2 MB) |
+
+About 65 MB of the remainder is llvmpipe / LLVM software GL on this box.
+
+### S-01 cancel reliability
+
+- `scripts/e2e-desktop.sh` ×10: **10/10** exit 0, `PASS S-01` in every run.
+- Manual 5 MB background conversion + 取消 click on Xvfb (release) ×10: **10/10** cancelled, no paste.
+- One extra `--update-screenshots` run failed once on a timing assert
+  (secondary menu 128 ms > 100 ms, run 11 of 20) and passed on rerun; reported, not hidden.

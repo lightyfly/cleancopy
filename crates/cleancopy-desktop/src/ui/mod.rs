@@ -86,6 +86,11 @@ impl DesktopApp {
         config: Config,
         save_path: Option<PathBuf>,
     ) -> Self {
+        if backdrop::Backdrop::for_platform().needs_transparent_window() {
+            if let Err(error) = backdrop::apply(cc) {
+                eprintln!("Native backdrop unavailable: {error}");
+            }
+        }
         if let Some(path) = fonts::install(&cc.egui_ctx) {
             eprintln!("CJK font: {}", path.display());
         }
@@ -187,6 +192,13 @@ impl DesktopApp {
     }
 }
 impl eframe::App for DesktopApp {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if backdrop::Backdrop::for_platform().needs_transparent_window() {
+            [0.0; 4]
+        } else {
+            visuals.panel_fill.to_normalized_gamma_f32()
+        }
+    }
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let now = self.now();
         self.engine.platform_mut().now = now;

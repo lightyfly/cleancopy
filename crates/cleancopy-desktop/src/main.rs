@@ -45,7 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(size)
             .with_resizable(false)
-            .with_decorations(false),
+            .with_decorations(false)
+            .with_transparent(
+                cleancopy_desktop::ui::backdrop::Backdrop::for_platform()
+                    .needs_transparent_window(),
+            ),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };

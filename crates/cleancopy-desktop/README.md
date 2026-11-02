@@ -48,7 +48,7 @@ xvfb-run -a -s "-screen 0 1280x800x24" sh -c '
   target/debug/cleancopy-app --preview settings &
   app=$!
   sleep 2
-  window=$(xdotool search --sync --onlyvisible --name "^CleanCopy$" | sort -n | tail -n 1)
+  window=$(xdotool search --sync --onlyvisible --name "^CleanCopy($| [^nf])" | sort -n | tail -n 1)
   target/debug/examples/screenshot /tmp/settings.png "$window"
   kill "$app"
   wait "$app" || true

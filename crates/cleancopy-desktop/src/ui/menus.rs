@@ -172,11 +172,10 @@ impl MenuState {
                     (
                         "↺",
                         "撤销上次转换",
-                        if cfg!(target_os = "macos") {
-                            "⌘Z"
-                        } else {
-                            "Ctrl+Z"
-                        },
+                        // No keyboard shortcut: Ctrl+Z / ⌘Z goes to the target
+                        // app while the menu is open, so do not advertise one
+                        // (report v4 M-2). Click or arrow keys + Enter.
+                        "",
                         model.undo_enabled && !model.converting,
                     ),
                 ]

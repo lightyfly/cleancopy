@@ -91,20 +91,9 @@ impl SettingsState {
                     FontId::proportional(13.0),
                     TEXT,
                 );
-                for (i, color) in [
-                    Color32::from_rgb(255, 95, 87),
-                    Color32::from_rgb(254, 188, 46),
-                    Color32::from_rgb(40, 200, 64),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    ui.painter().circle_filled(
-                        origin + Vec2::new(22.0 + i as f32 * 20.0, 22.0),
-                        6.0,
-                        color,
-                    );
-                }
+                // Traffic-light buttons only on macOS; Linux/Windows use
+                // native window decorations (report v4 M-6).
+                super::paint_mac_window_buttons(ui, origin);
                 ui.painter()
                     .hline(title.x_range(), title.bottom(), Stroke::new(1.0_f32, LINE));
                 let left = egui::Rect::from_min_size(

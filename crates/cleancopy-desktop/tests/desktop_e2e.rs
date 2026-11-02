@@ -21,6 +21,11 @@ struct Harness {
     /// (`scripts/e2e-desktop.sh --update-screenshots`).
     shots: PathBuf,
 }
+/// Matches the app's own windows ("CleanCopy", "CleanCopy 设置",
+/// "欢迎使用 CleanCopy") but not the pasteprobe target or the floating menu.
+/// xdotool matches case-insensitively and byte-wise (no UTF-8 in the regex).
+const APP_WINDOW: &str = "CleanCopy($| [^nf])";
+
 fn screenshot_dir(root: &Path) -> PathBuf {
     let dir = if std::env::var_os("CLEANCOPY_UPDATE_SCREENSHOTS").is_some_and(|v| v == "1") {
         root.join("docs/screenshots")
@@ -687,7 +692,7 @@ fn desktop_runtime_matrix() {
         wait("settings/preview window", || {
             Command::new("xdotool")
                 .env("DISPLAY", &h.display)
-                .args(["search", "--onlyvisible", "--name", "^CleanCopy$"])
+                .args(["search", "--onlyvisible", "--name", APP_WINDOW])
                 .output()
                 .unwrap()
                 .status
@@ -720,7 +725,7 @@ fn desktop_runtime_matrix() {
     wait("first-run onboarding window", || {
         let out = Command::new("xdotool")
             .env("DISPLAY", &h.display)
-            .args(["search", "--onlyvisible", "--name", "^CleanCopy$"])
+            .args(["search", "--onlyvisible", "--name", APP_WINDOW])
             .output()
             .unwrap();
         window = String::from_utf8(out.stdout)
@@ -786,7 +791,7 @@ fn desktop_runtime_matrix() {
     wait("onboarding closed", || {
         !Command::new("xdotool")
             .env("DISPLAY", &h.display)
-            .args(["search", "--onlyvisible", "--name", "^CleanCopy$"])
+            .args(["search", "--onlyvisible", "--name", APP_WINDOW])
             .output()
             .unwrap()
             .status

@@ -71,6 +71,31 @@ impl Platform for DemoPlatform {
     }
 }
 
+/// Whether settings/onboarding windows draw their own macOS-style chrome.
+/// Elsewhere the window manager's native decorations are used.
+pub const CUSTOM_TITLE_BAR: bool = cfg!(target_os = "macos");
+
+/// The red/yellow/green macOS window buttons, painted only on macOS.
+pub(crate) fn paint_mac_window_buttons(ui: &egui::Ui, origin: egui::Pos2) {
+    if !CUSTOM_TITLE_BAR {
+        return;
+    }
+    for (i, color) in [
+        egui::Color32::from_rgb(255, 95, 87),
+        egui::Color32::from_rgb(254, 188, 46),
+        egui::Color32::from_rgb(40, 200, 64),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ui.painter().circle_filled(
+            origin + egui::vec2(22.0 + i as f32 * 20.0, 22.0),
+            6.0,
+            color,
+        );
+    }
+}
+
 /// Set on a settings window spawned from onboarding's "更改快捷键" link.
 pub const FOCUS_HOTKEY_ENV: &str = "CLEANCOPY_FOCUS_HOTKEY";
 

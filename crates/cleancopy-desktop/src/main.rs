@@ -111,7 +111,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(size)
             .with_resizable(false)
-            .with_decorations(false)
+            .with_title(match view {
+                View::Settings => "CleanCopy 设置",
+                View::Onboarding => "欢迎使用 CleanCopy",
+                _ => "CleanCopy",
+            })
+            // Native decorations on Linux/Windows (M-6); macOS draws its own.
+            .with_decorations(!cleancopy_desktop::ui::CUSTOM_TITLE_BAR)
             .with_transparent(
                 cleancopy_desktop::ui::backdrop::Backdrop::for_platform()
                     .needs_transparent_window(),

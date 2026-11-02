@@ -318,3 +318,23 @@ refreshed and inspected (only `e2e-background-progress.png` changed in bytes).
   `docs/screenshots/menu-word-over-2mb-note.png`.
 - Gates: 255 pass / 0 fail / 7 ignored, clippy ok, fmt ok. e2e `--update-screenshots`: 1 passed
   (45.5 s vs 17 s in v6: e2e targets that never read the clipboard now wait for the 5 s timeout).
+
+## v8 (report-v8)
+
+- D-A v8: real WPS starts reading ~1.9 s after Ctrl+V and was still transferring at 5 s when v7 restored. New X11 rule (x11_restore_ready in crates/cleancopy-desktop/src/linux.rs): newer copy -> stop at once (restore skipped); 30 s absolute cap; 5 s timeout only if no SelectionRequest ever arrived; once reading started, restore only after transfer complete + 100 ms idle; no progress for > 5 s mid-transfer -> reader gone, restore. TransferProgress gained `requested`. Unit test x11_restore_waits_for_completed_reads extended.
+- e2e: the harness's restore polling read the clipboard every 5 ms, so the owner was never idle 100 ms and every restore hit the timeout (45.5 s run). Restore polls now run every 200 ms. New e2e step: target reads 2 s after Ctrl+V with 1.5 s per INCR chunk; 1,260,076 B read in 13.4 s, converted text, original restored at 13.5 s. Full e2e: 30.08 s (1 passed), of which the slow-reader step is ~13.5 s, so the rest is ~16.6 s (derived, not separately timed).
+- Slow-reader matrix (release, Xvfb :93, silent mode), 2 rounds each, all converted, clipboard restored after each read:
+
+  | profile | input | read done ms | restored ms |
+  |---|---|---|---|
+  | 400 ms delay, 20 ms/chunk | 2m-exact | 823-826 | 1104-1115 |
+  | same | 3m | 910-911 | 1035-1037 |
+  | same | 5m | 1067-1069 | 1226-1229 |
+  | 1.9 s delay, 300 ms/chunk (WPS-like) | 2m-exact | 5861-5866 | 5866-5923 |
+  | same | 3m | 7066-7071 | 7066-7071 |
+  | same | 5m | 9171-9174 | 9171-9175 |
+
+  (restored == read done within 1 ms means the probe saw the new owner at its first check.)
+- Small paste, fast reader, 3 KB, 5 rounds, Ctrl+V to restore: 140-144 ms (v7 before: 142-145 ms).
+- Real WPS not tested (cannot be run in isolation here).
+- Gates: 255 pass / 0 fail / 7 ignored, clippy ok, fmt ok.

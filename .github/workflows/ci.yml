@@ -43,7 +43,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb xauth xfwm4 xdotool xclip x11-utils dbus \
-            libgl1 libegl1 libgl1-mesa-dri fonts-noto-cjk
+            libgl1 libegl1 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 libxi6 \
+            fonts-noto-cjk
       - name: CLI clipboard
         run: xvfb-run -a -s '-screen 0 1280x720x24 -noreset' cargo test -p cleancopy-cli --test clipboard -- --ignored
       - name: Native clipboard

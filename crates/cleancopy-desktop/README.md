@@ -3,7 +3,8 @@
 This crate supplies the headless paste engine and the `cleancopy-app` desktop UI.
 On Linux, the default launch runs the X11 global-hotkey daemon, native clipboard
 adapter, nonactivating egui menu, and pure-Rust `ksni` StatusNotifier tray. A missing
-tray host or session bus is logged without disabling the hotkey. No GTK is needed.
+tray host or session bus is logged without disabling the hotkey. No GTK is needed,
+but `libxkbcommon-x11` must be present at runtime or the daemon panics at startup.
 Windows/macOS native desktop adapters are not implemented; those platforms retain
 the settings and preview UI. Existing CLI behavior is unchanged.
 

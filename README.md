@@ -85,7 +85,7 @@ cleancopy-app --settings   # open settings
 - **Clipboard:** the original contents are restored after the target has read the paste, unless you copied something newer.
 - **Other:** tray menu, onboarding, TOML settings with per-app rules, undo of the last conversion, and safe mode after repeated crashes.
 
-The hotkey daemon, native paste, and tray exist on Linux X11 only. Native Wayland is not supported. **macOS and Windows offer only the settings and preview UI.** Runtime evidence comes from isolated Xvfb, not from real Word/WPS paste testing. See the [desktop README](crates/cleancopy-desktop/README.md) and [acceptance notes](docs/acceptance.md).
+It needs `libxkbcommon-x11` at runtime (`libxkbcommon-x11-0` on Debian/Ubuntu); without it the daemon crashes at startup. The hotkey daemon, native paste, and tray exist on Linux X11 only. Native Wayland is not supported. **macOS and Windows offer only the settings and preview UI.** Runtime evidence comes from isolated Xvfb, not from real Word/WPS paste testing. See the [desktop README](crates/cleancopy-desktop/README.md) and [acceptance notes](docs/acceptance.md).
 
 ## Claude Code and Codex integration
 

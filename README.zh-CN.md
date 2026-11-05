@@ -85,7 +85,7 @@ cleancopy-app --settings   # 打开设置
 - **剪贴板：** 目标应用读取完成后恢复原内容；如果你已复制了新内容，则不恢复。
 - **其他：** 托盘菜单、新手引导、TOML 设置与按应用规则、撤销上一次转换，以及反复崩溃后进入安全模式。
 
-热键后台、原生粘贴和托盘仅在 Linux X11 上提供。不支持原生 Wayland。**macOS 和 Windows 只有设置与预览界面。** 运行证据来自隔离的 Xvfb，不是真实 Word/WPS 粘贴测试。详见[桌面端 README](crates/cleancopy-desktop/README.md)与[验收记录](docs/acceptance.md)。
+运行时需要 `libxkbcommon-x11`（Debian/Ubuntu 上是 `libxkbcommon-x11-0`），缺少时后台服务启动即崩溃。热键后台、原生粘贴和托盘仅在 Linux X11 上提供。不支持原生 Wayland。**macOS 和 Windows 只有设置与预览界面。** 运行证据来自隔离的 Xvfb，不是真实 Word/WPS 粘贴测试。详见[桌面端 README](crates/cleancopy-desktop/README.md)与[验收记录](docs/acceptance.md)。
 
 ## Claude Code / Codex 集成
 

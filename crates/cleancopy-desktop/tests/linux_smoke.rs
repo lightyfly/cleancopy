@@ -39,11 +39,16 @@ impl Processes {
             .push(command.spawn().expect("launch native test peer"));
     }
 }
-fn wait_for(description: &str, mut condition: impl FnMut() -> bool) {
+fn wait_for(description: &str, condition: impl FnMut() -> bool) {
+    wait_every(description, 5, condition);
+}
+/// Restore polls must stay slow: each one reads the clipboard, and restoration
+/// waits for the owner to be idle for 100 ms.
+fn wait_every(description: &str, poll_ms: u64, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while !condition() {
         assert!(Instant::now() < deadline, "timed out: {description}");
-        thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(poll_ms));
     }
 }
 fn xdo(display: &str, args: &[&str]) {
@@ -240,7 +245,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         !visible_menu.status.success(),
         "silent paste must not map a menu"
     );
-    wait_for("original clipboard restoration", || {
+    wait_every("original clipboard restoration", 200, || {
         read_target(&peer, &display, "UTF8_STRING") == source
     });
     let mut expected_targets: Vec<_> = String::from_utf8(original_targets)
@@ -294,7 +299,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         fs::read(app.join("paste-2.bin")).unwrap(),
         expected.as_bytes()
     );
-    wait_for("restoration after held Shift", || {
+    wait_every("restoration after held Shift", 200, || {
         read_target(&peer, &display, "UTF8_STRING") == source
     });
     xdo(&display, &["key", "Caps_Lock", "Num_Lock"]);
@@ -432,7 +437,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         fs::read(app.join("paste-3.bin")).unwrap(),
         expected.as_bytes()
     );
-    wait_for("restoration after configured primary", || {
+    wait_every("restoration after configured primary", 200, || {
         read_target(&peer, &display, "UTF8_STRING") == source
     });
     xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);
@@ -531,7 +536,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
             fs::read(app.join("paste-4.bin")).unwrap(),
             expected.as_bytes()
         );
-        wait_for("restoration after rollback", || {
+        wait_every("restoration after rollback", 200, || {
             read_target(&peer, &display, "UTF8_STRING") == source
         });
         xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);

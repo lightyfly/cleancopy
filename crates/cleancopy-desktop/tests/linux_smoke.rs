@@ -349,15 +349,19 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
             .output()
             .unwrap()
     };
+    // Keep the id from the search that succeeded; a second search can come back empty.
+    let mut menu_search = Vec::new();
     wait_for("nonactivating floating menu", || {
-        visible_menu().status.success()
+        let output = visible_menu();
+        menu_search = output.stdout;
+        output.status.success()
     });
     assert_eq!(
         focus(),
         window.trim(),
         "floating menu must not steal input focus"
     );
-    let menu_window: u32 = String::from_utf8(visible_menu().stdout)
+    let menu_window: u32 = String::from_utf8(menu_search)
         .unwrap()
         .trim()
         .parse()

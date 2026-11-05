@@ -1,3 +1,4 @@
 /target/
 dist-out/*.tar.xz
 dist-out/*.sha256
+dist-out/*/

@@ -39,6 +39,8 @@ impl Processes {
             .push(command.spawn().expect("launch native test peer"));
     }
 }
+/// Longer than the idle daemon's 1 s tick, which is when it rereads the config.
+const CONFIG_RELOAD: Duration = Duration::from_millis(1500);
 fn wait_for(description: &str, condition: impl FnMut() -> bool) {
     wait_every(description, 5, condition);
 }
@@ -428,7 +430,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
     updated.full_menu_hotkey = "Ctrl+Super+F9".into();
     updated.save(&config_path).unwrap();
     // This allows the file-reload poll to run, not any engine press arbitration.
-    thread::sleep(Duration::from_millis(750));
+    thread::sleep(CONFIG_RELOAD);
     xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+F8"]);
     wait_for("live configured primary paste", || {
         app.join("paste-3.bin").exists()
@@ -549,7 +551,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         });
         // Stop retries before probing cleanup of the partially registered F10.
         updated.save(&config_path).unwrap();
-        thread::sleep(Duration::from_millis(750));
+        thread::sleep(CONFIG_RELOAD);
         conn.grab_key(
             false,
             root_window,

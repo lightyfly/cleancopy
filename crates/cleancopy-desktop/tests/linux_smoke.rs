@@ -192,6 +192,8 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
             },
             format: Format::ChineseNumbered,
         }],
+        // Otherwise the daemon relaunches this example as `--onboarding`.
+        onboarding_done: true,
         ..Config::default()
     };
     let config_path = dir.path().join("config.toml");
@@ -421,17 +423,17 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         !app.join("paste-3.bin").exists(),
         "Ctrl+Alt+V must show the full menu without issuing a paste"
     );
-    // Reload both configured bindings in the running native driver. These are
-    // function keys so an ungrabbed chord cannot accidentally paste in the peer.
-    // Avoid Ctrl+Alt+Fn: XKB consumes those as virtual-terminal switches before
-    // clients receive KeyPress, even under Xvfb with a successful passive grab.
+    // Reload both configured bindings in the running native driver. Use letter
+    // keys: on GitHub's Ubuntu runners a successful grab of Ctrl+Shift+F8 never
+    // delivered KeyPress. Ctrl+Alt+Fn is out too: XKB consumes those as
+    // virtual-terminal switches, even under Xvfb with a successful passive grab.
     let mut updated = config.clone();
-    updated.hotkey = "Ctrl+Shift+F8".into();
-    updated.full_menu_hotkey = "Ctrl+Super+F9".into();
+    updated.hotkey = "Ctrl+Shift+B".into();
+    updated.full_menu_hotkey = "Ctrl+Super+N".into();
     updated.save(&config_path).unwrap();
     // This allows the file-reload poll to run, not any engine press arbitration.
     thread::sleep(CONFIG_RELOAD);
-    xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+F8"]);
+    xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+b"]);
     wait_for("live configured primary paste", || {
         app.join("paste-3.bin").exists()
     });
@@ -442,7 +444,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
     wait_every("restoration after configured primary", 200, || {
         read_target(&peer, &display, "UTF8_STRING") == source
     });
-    xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);
+    xdo(&display, &["key", "--clearmodifiers", "ctrl+super+n"]);
     wait_for("live configured full-menu binding", || {
         visible_menu().status.success()
     });
@@ -452,7 +454,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
     });
 
     // Extra modifiers must not be mistaken for either configured chord.
-    for chord in ["ctrl+shift+super+F8", "ctrl+super+shift+F9"] {
+    for chord in ["ctrl+shift+super+b", "ctrl+super+shift+n"] {
         xdo(&display, &["key", "--clearmodifiers", chord]);
         let until = Instant::now() + Duration::from_millis(150);
         while Instant::now() < until {
@@ -530,7 +532,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
                 text.contains("CleanCopy settings:") && text.contains("BadAccess")
             })
         });
-        xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+F8"]);
+        xdo(&display, &["key", "--clearmodifiers", "ctrl+shift+b"]);
         wait_for("primary retained after failed update", || {
             app.join("paste-4.bin").exists()
         });
@@ -541,7 +543,7 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
         wait_every("restoration after rollback", 200, || {
             read_target(&peer, &display, "UTF8_STRING") == source
         });
-        xdo(&display, &["key", "--clearmodifiers", "ctrl+super+F9"]);
+        xdo(&display, &["key", "--clearmodifiers", "ctrl+super+n"]);
         wait_for("full-menu retained after failed update", || {
             visible_menu().status.success()
         });

@@ -53,6 +53,9 @@ jobs:
         run: cargo test -p cleancopy-desktop --test linux_smoke -- --ignored --nocapture --test-threads=1
       - name: Desktop E2E
         if: ${{ !cancelled() }}
+        env:
+          # CI catches severe regressions only; acceptance runs use the product limits.
+          CLEANCOPY_E2E_LATENCY_SCALE: "3"
         run: bash scripts/e2e-desktop.sh
       - name: Upload E2E evidence
         if: failure()

@@ -26,6 +26,8 @@ xvfb-run -a -s '-screen 0 1280x720x24 -noreset' cargo test -p cleancopy-cli --te
 xvfb-run -a -s '-screen 0 1280x720x24 -noreset' cargo test -p cleancopy-clipboard --test native -- --ignored
 ```
 
+`scripts/e2e-desktop.sh` enforces the product latency limits (100 ms menus, 300 ms for a 10k-character paste). CI sets `CLEANCOPY_E2E_LATENCY_SCALE=3` because its runners are slower, so a green CI run is not latency acceptance; run the script without that variable for acceptance.
+
 Do not run these against your normal desktop unless you intentionally accept clipboard replacement. macOS/Windows native tests need a real graphical session; successful cross-compilation is **not** a clipboard runtime result. See [verification](docs/verification.md) for executed commands and current limitations.
 
 For renderer changes, add a minimal case in `fixtures/` and/or a focused assertion in the core tests. Golden snapshots are in `tests/snapshots/`. Review snapshot changes, including CJK widths, blank lines, code whitespace, and list numbering. If using the optional `cargo-insta` developer tool, review with `cargo insta review`; never accept unrelated snapshots blindly. Keep the [plain-text rules](docs/plain-text-rules.md) synchronized with intentional behavior changes.

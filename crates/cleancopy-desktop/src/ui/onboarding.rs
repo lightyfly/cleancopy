@@ -682,13 +682,13 @@ mod tests {
     #[test]
     fn hotkey_paste_formats_but_plain_paste_stays_raw() {
         let config = Config::default();
-        for (modifiers, formatted) in [
-            (
-                egui::Modifiers::CTRL | egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                true,
-            ),
-            (egui::Modifiers::CTRL | egui::Modifiers::COMMAND, false),
-        ] {
+        // The default hotkey is Super+Shift+V on macOS, Ctrl+Shift+V elsewhere.
+        let primary = if cfg!(target_os = "macos") {
+            egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND
+        } else {
+            egui::Modifiers::CTRL | egui::Modifiers::COMMAND
+        };
+        for (modifiers, formatted) in [(primary | egui::Modifiers::SHIFT, true), (primary, false)] {
             let ctx = egui::Context::default();
             let mut state = OnboardingState {
                 step: 2,

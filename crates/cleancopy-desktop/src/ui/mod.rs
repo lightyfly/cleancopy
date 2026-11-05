@@ -541,11 +541,14 @@ mod tests {
         a.set_hotkey_pause(true);
         drop(a);
         assert!(!marker.exists(), "dropping the window restores the hotkey");
-        std::fs::write(&marker, "999999999").unwrap();
-        assert!(
-            !crate::config::hotkey_pause_active(&config_file),
-            "stale pid ignored"
-        );
+        // Only the Linux daemon reads the marker, and only Linux checks the pid.
+        if cfg!(target_os = "linux") {
+            std::fs::write(&marker, "999999999").unwrap();
+            assert!(
+                !crate::config::hotkey_pause_active(&config_file),
+                "stale pid ignored"
+            );
+        }
         let _ = std::fs::remove_dir_all(dir);
     }
 

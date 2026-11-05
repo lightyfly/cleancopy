@@ -26,7 +26,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --all-targets --all-features
+        run: cargo test --all-targets --all-features --no-fail-fast
 
   native-x11:
     # The #[ignore]d tests replace the clipboard, so they run only on displays
@@ -51,6 +51,7 @@ jobs:
       - name: Desktop hotkey smoke
         run: cargo test -p cleancopy-desktop --test linux_smoke -- --ignored --nocapture --test-threads=1
       - name: Desktop E2E
+        if: ${{ !cancelled() }}
         run: bash scripts/e2e-desktop.sh
       - name: Upload E2E evidence
         if: failure()

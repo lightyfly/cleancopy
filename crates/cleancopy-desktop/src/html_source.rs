@@ -525,7 +525,7 @@ mod tests {
             let out = html_to_markdown(html);
             assert_eq!(out, md, "{html}");
             assert_eq!(
-                cleancopy_core::render_plain(&out).trim_end_matches('\n'),
+                cleancopy_core::render_plain(&out).trim_end_matches(['\r', '\n']),
                 md,
                 "{html}"
             );

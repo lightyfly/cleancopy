@@ -114,7 +114,14 @@ fn hotkey_pastes_formatted_text_and_restores_all_native_bytes() {
             .stderr(log("wm.log"))
             .stdout(Stdio::null()),
     );
-    thread::sleep(Duration::from_millis(500));
+    // xdotool windowactivate refuses to run until the WM advertises this hint.
+    wait_for("window manager EWMH readiness", || {
+        Command::new("xprop")
+            .env("DISPLAY", &display)
+            .args(["-root", "_NET_SUPPORTED"])
+            .output()
+            .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("_NET_ACTIVE_WINDOW"))
+    });
     let fixture = dir.path().join("fixture");
     let app = dir.path().join("app");
     fs::create_dir_all(&fixture).unwrap();

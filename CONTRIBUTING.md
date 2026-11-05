@@ -13,7 +13,7 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The workspace contains `cleancopy-core` (parsing/rendering), `cleancopy-clipboard` (native formats/access), and `cleancopy-cli` (the binary). Do not assume the manifest version denotes a published release.
+The workspace contains `cleancopy-core` (parsing/rendering), `cleancopy-clipboard` (native formats/access), `cleancopy-cli` (the CLI binary), and `cleancopy-desktop` (the `cleancopy-app` desktop app). Do not assume the manifest version denotes a published release.
 
 ## Tests and clipboard safety
 

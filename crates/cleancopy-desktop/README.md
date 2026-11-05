@@ -158,9 +158,21 @@ Escape to cancel; native navigation can dispatch `MenuChoice` directly for the
 currently highlighted action. Menu callbacks carry their menu ID; stale callbacks
 cannot execute a later menu's action.
 
-The engine waits **150 ms** after paste dispatch before attempting clipboard
-restoration. Failed restoration retains the snapshot and schedules another
-attempt 150 ms later. If the clipboard no longer equals the bytes written by the
+Clipboard restoration waits until the paste target has read the data. From
+**150 ms** after paste dispatch, the engine asks `Platform::restore_ready` every
+20 ms. The default rule, for platforms that cannot observe the transfer, waits
+150 ms + 400 ms per MB, at most 3 s. The Linux adapter watches the X11 transfer
+(`x11_restore_ready`):
+
+- A newer copy ends the wait at once.
+- With no read request at all, it gives up after 5 s.
+- Once reading starts, it restores after the transfer completes and the owner has
+  been idle for 100 ms, or after more than 5 s with no progress.
+- The absolute cap is 30 s.
+
+Any reader counts as a completed request, including a clipboard manager. Failed
+restoration retains the snapshot and schedules another attempt 150 ms later. If
+the clipboard no longer equals the bytes written by the
 engine, restoration is skipped rather than overwriting a newer user copy. New
 paste transactions are blocked until the pending restoration completes or is
 safely skipped. Native clipboard writes must be atomic on error: `Err` means no
@@ -186,8 +198,7 @@ The supplied `docs/desktop/*.html` and `base.css` are the visual references.
 Linux supports WM_CLASS/foreground discovery, lossless native clipboard snapshots,
 XTEST paste/undo, passive-hotkey conflict reporting, and pointer-positioned menus.
 Native Wayland, Windows/macOS desktop adapters, caret positioning, native Word/WPS
-acceptance, HTML-only import, mixed-image placeholders, and background conversion
-UI remain outside this stage.
+acceptance, and mixed-image placeholders remain outside this stage.
 
 Ordinary engine tests use a mock platform and explicit timestamps. The ignored
 Linux integration tests own an isolated Xvfb server and real native clipboard

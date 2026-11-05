@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-CleanCopy 是本地运行的 Rust 命令行工具。目标应用决定采用哪种剪贴板格式；“粘到哪里都对”是目标，并非已经验证的兼容性保证。
+CleanCopy 是本地运行的 Rust 命令行工具，并提供 Linux X11 桌面应用。目标应用决定采用哪种剪贴板格式；“粘到哪里都对”是目标，并非已经验证的兼容性保证。
 
 ## 为什么需要它
 
@@ -55,7 +55,7 @@ cleancopy inspect                    # 原生格式名称与字节数
 
 解析器启用表格、任务列表、删除线、自动链接和脚注。纯文本采用编号列表、四空格缩进、`【二至六级标题】`、`☐`/`☑`、代码分隔线、可读链接和编号脚注。表格按 Unicode 显示宽度对齐，超过 60 列转为记录式。详见[纯文本规则](docs/plain-text-rules.md)。
 
-HTML 是完整的最小文档，代码与表格使用内联样式，任务项是静态字符。原始 HTML 被转义显示，不作为标签执行；危险链接/图片地址由 comrak 阻止。当前无语法高亮或 RTF。Markdown 透传会移除终端转义/控制序列（保留制表符和换行）、裁剪首尾空白并统一换行，不是逐字节保留，也不会重新排版为 CommonMark。纯文本和 Markdown 在 Windows 使用 CRLF，其他平台使用 LF；HTML 始终使用 LF。非空纯文本以换行结束，Markdown 裁剪首尾空白。
+HTML 是完整的最小文档，代码与表格使用内联样式，任务项是静态字符。原始 HTML 被转义显示，不作为标签执行；危险链接/图片地址由 comrak 阻止。当前无语法高亮，CLI 也不输出 RTF（桌面应用的 Word/WPS 格式会附带 RTF）。Markdown 透传会移除终端转义/控制序列（保留制表符和换行）、裁剪首尾空白并统一换行，不是逐字节保留，也不会重新排版为 CommonMark。纯文本和 Markdown 在 Windows 使用 CRLF，其他平台使用 LF；HTML 始终使用 LF。非空纯文本以换行结束，Markdown 裁剪首尾空白。
 
 ## 原生剪贴板与验证边界
 
@@ -68,6 +68,24 @@ HTML 是完整的最小文档，代码与表格使用内联样式，任务项是
 Linux CLI 退出后由后台 holder 继续响应剪贴板请求，直到其他程序接管。需要可用的 X11 连接（`DISPLAY`）。不支持原生 Wayland；XWayland 可能提供 X11 连接，但到原生 Wayland 应用的桥接尚未验证。未实现剪贴板管理器交接。
 
 Xvfb 读回不等于真实应用粘贴测试。Word、WPS、微信、飞书、Obsidian、Typora 等仍需单独实测。参见[兼容性状态](docs/compat.md)与[验证记录](docs/verification.md)。[设计文档](docs/design.md)包含提案及历史里程碑，不应当作功能完成或版本发布的证明。
+
+## 桌面应用（仅 Linux X11）
+
+`cleancopy-app` 是常驻后台的助手，在粘贴时转换内容。目前只能从源码构建，没有打包或发布：
+
+```sh
+cargo install --path crates/cleancopy-desktop
+cleancopy-app              # 运行后台服务
+cleancopy-app --settings   # 打开设置
+```
+
+- **快捷键：** Ctrl+Shift+V 是智能粘贴，按前台应用配置的格式粘贴；Ctrl+Alt+V 打开完整粘贴菜单。两者都可修改，普通 Ctrl+V 不受影响。
+- **格式：** 编号纯文本、Word/WPS 富文本（HTML + RTF）、Markdown 原样、去符号纯文本、HTML 源码（默认关闭）。超过 2 MB 的文本不提供 Word/WPS 富文本，静默粘贴时回退为编号纯文本。
+- **来源：** 剪贴板中的 Markdown 或 HTML，例如来自 ChatGPT、Gemini 或浏览器。普通文本默认原样粘贴。
+- **剪贴板：** 目标应用读取完成后恢复原内容；如果你已复制了新内容，则不恢复。
+- **其他：** 托盘菜单、新手引导、TOML 设置与按应用规则、撤销上一次转换，以及反复崩溃后进入安全模式。
+
+热键后台、原生粘贴和托盘仅在 Linux X11 上提供。不支持原生 Wayland。**macOS 和 Windows 只有设置与预览界面。** 运行证据来自隔离的 Xvfb，不是真实 Word/WPS 粘贴测试。详见[桌面端 README](crates/cleancopy-desktop/README.md)与[验收记录](docs/acceptance.md)。
 
 ## Claude Code / Codex 集成
 
@@ -108,20 +126,20 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-图形剪贴板测试会覆盖剪贴板，默认忽略。隔离 Xvfb 命令、安全注意事项及兼容性报告见[贡献指南](CONTRIBUTING.md)。
+图形剪贴板和桌面端测试会覆盖剪贴板，默认忽略；CI 在隔离的 Xvfb 上运行它们。隔离 Xvfb 命令、安全注意事项及兼容性报告见[贡献指南](CONTRIBUTING.md)。
 
-工作区包括解析/渲染库 `cleancopy-core`、原生访问与 CF_HTML 库 `cleancopy-clipboard`、命令行 `cleancopy-cli`。输入样例在 `fixtures/`，golden 快照在 `tests/snapshots/`。
+工作区包括解析/渲染库 `cleancopy-core`、原生访问与 CF_HTML 库 `cleancopy-clipboard`、命令行 `cleancopy-cli`、桌面应用 `cleancopy-desktop`。输入样例在 `fixtures/`，golden 快照在 `tests/snapshots/`。
 
 ## 路线图（尚未实现的承诺）
 
 - macOS / Windows 剪贴板运行验证及真实应用粘贴矩阵。
+- macOS 和 Windows 桌面适配（热键、原生粘贴、托盘）。
 - 原生 Wayland、剪贴板管理器互操作。
-- 监听与 Markdown 检测、全局热键、daemon。
-- 配置、按应用规则、交互式集成安装。
-- 语法高亮、可选 RTF、编辑器/浏览器扩展。
+- CLI 监听模式、交互式集成安装。
+- 语法高亮、编辑器/浏览器扩展。
 - 验证后的分发打包与真实录屏演示。
 
-当前不支持 `--watch`、`--normalize`、daemon/config/integrate 子命令或自动识别前台应用。这里没有演示录屏，也不暗示已经制作。
+CLI 不支持 `--watch`、`--normalize`、daemon/config/integrate 子命令或自动识别前台应用；热键、设置和按应用规则属于桌面应用。这里没有演示录屏，也不暗示已经制作。
 
 ## 许可
 

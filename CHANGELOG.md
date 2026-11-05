@@ -19,10 +19,16 @@ All notable changes will be documented here. The workspace version is currently 
 - Claude Code command/skill and Codex instruction templates, with local-format verification recorded separately.
 - cargo-dist 0.32.0 configuration and a manual, read-only distribution-plan workflow; no publishing automation is enabled.
 - Complete application test matrix with untested cells and reproducible kitchen-sink Markdown/plain X11 representation checks.
+- `cleancopy-app` desktop app for Linux X11: global smart-paste and full-menu hotkeys, per-app format rules, floating menu, tray, settings, onboarding, undo of the last conversion, and TOML configuration.
+- Numbered plain text, Word/WPS HTML, and RTF renderers, plus HTML clipboard sources (ChatGPT, Gemini, browsers) converted to Markdown.
+- Clipboard snapshot and restore: on X11 the restore waits until the paste target has read the data; elsewhere it uses a size-based wait.
+- Crash supervisor and safe mode, with a plain-text fallback for clipboards over 2 MB.
+- CI job running the ignored native tests on isolated Xvfb displays.
 
 ### Verification boundary
 
 - Linux X11 has runtime evidence from isolated Xvfb, including independent readback after CLI exit.
 - macOS and Windows are **compile checked only**, not runtime verified. Real target-application paste compatibility remains unverified; see [compatibility](docs/compat.md) and [verification](docs/verification.md).
-- Native Wayland, clipboard-manager handoff, watch mode, hotkeys, daemon/app rules, configuration, syntax highlighting, and an integration installer are not implemented.
+- The desktop daemon, hotkeys, and native paste exist on Linux X11 only; macOS and Windows have the settings and preview UI, with no desktop adapter.
+- Native Wayland, clipboard-manager handoff, CLI watch mode, syntax highlighting, and an integration installer are not implemented.
 - No published package, installer, or demonstration is claimed by this changelog.

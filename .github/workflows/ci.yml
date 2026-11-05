@@ -27,3 +27,37 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --all-targets --all-features
+
+  native-x11:
+    # The #[ignore]d tests replace the clipboard, so they run only on displays
+    # owned by this job. Each desktop test starts its own Xvfb.
+    name: Native X11 (Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install X11 test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth xfwm4 xdotool xclip x11-utils dbus \
+            libgl1 libegl1 libgl1-mesa-dri fonts-noto-cjk
+      - name: CLI clipboard
+        run: xvfb-run -a -s '-screen 0 1280x720x24 -noreset' cargo test -p cleancopy-cli --test clipboard -- --ignored
+      - name: Native clipboard
+        run: xvfb-run -a -s '-screen 0 1280x720x24 -noreset' cargo test -p cleancopy-clipboard -- --ignored --test-threads=1
+      - name: Desktop hotkey smoke
+        run: cargo test -p cleancopy-desktop --test linux_smoke -- --ignored --nocapture --test-threads=1
+      - name: Desktop E2E
+        run: bash scripts/e2e-desktop.sh
+      - name: Upload E2E evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: |
+            /tmp/cleancopy-e2e.log
+            target/e2e-screenshots/
+          if-no-files-found: ignore
